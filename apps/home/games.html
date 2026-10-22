@@ -1,0 +1,351 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Games</title>
+<!--
+  Games screen of the Home Screen app (1920x1080). Opens a game room on the hub (HTTP
+  long-polls to /api/games/tv), shows the room code and the players, starts a game, and draws it with the
+  game's TV part (games/<id>.js sets window.TVGAMES[id] = { render(box, view) }).
+  Keys: arrows and OK pick and start a game; in a game OK is the host button and Back
+  ends it; Back in the lobby returns to the Home Screen.
+  ES5 only, no flexbox or grid: the web engine is WebKit 537.
+-->
+<style>
+  @font-face { font-family: "TV Sans"; font-weight: 300; src: url("file:///usr/share/fonts/MuseoSansThin.ttf"); }
+  @font-face { font-family: "TV Sans"; font-weight: 400; src: url("file:///usr/share/fonts/MuseoSansLight.ttf"); }
+  @font-face { font-family: "TV Sans"; font-weight: 600; src: url("file:///usr/share/fonts/MuseoSansMedium.ttf"); }
+  @font-face { font-family: "TV Sans"; font-weight: 700; src: url("file:///usr/share/fonts/MuseoSansBold.ttf"); }
+
+  html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #101113; }
+  body { position: relative; color: #f3f3f1; font-family: "TV Sans", "Museo Sans", "LG Display", sans-serif; font-weight: 400; }
+  .muted { color: #8d929a; }
+  .label { font-size: 24px; font-weight: 600; letter-spacing: 3px; color: #8d929a; }
+  .dot { display: inline-block; width: 22px; height: 22px; border-radius: 11px; margin-right: 18px; vertical-align: -1px; }
+  .screen { display: none; position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+  .screen.on { display: block; }
+  .clock { position: absolute; right: 112px; top: 96px; font-size: 52px; font-weight: 300; }
+  .title { position: absolute; left: 112px; top: 92px; }
+  .title h1 { margin: 12px 0 0; font-size: 72px; font-weight: 300; }
+
+  /* Lobby */
+  /* Left: how to join, then who joined. Right: the games and what the picked one is.
+     Scoped to #lobby: the game screens have their own .list and the like. */
+  #lobby .join { position: absolute; left: 112px; top: 260px; width: 860px; }
+  #lobby .join .addr { margin: 14px 0 34px; font-size: 44px; }
+  #lobby .join .code { margin-top: 6px; font-size: 150px; font-weight: 600; letter-spacing: 18px; color: #f2b24c; line-height: 1.05; }
+  #lobby .people { position: absolute; left: 112px; top: 664px; width: 860px; }
+  #lobby .people .row { display: inline-block; margin: 16px 40px 0 0; font-size: 34px; white-space: nowrap; }
+  #lobby .people .row.off { opacity: .4; }
+  #lobby .people .none { margin-top: 16px; font-size: 32px; color: #8d929a; }
+  #lobby .list { position: absolute; left: 1040px; top: 250px; width: 768px; }
+  #lobby .game { margin-top: 12px; padding: 12px 26px; background: #1a1c20; border: 4px solid transparent; border-radius: 18px; white-space: nowrap; }
+  #lobby .game.focus { background: #22252a; }
+  #lobby .game b { display: inline-block; width: 300px; font-size: 36px; font-weight: 600; vertical-align: middle; }
+  #lobby .game i { display: inline-block; margin-left: 10px; padding: 4px 18px; border: 3px solid transparent; border-radius: 14px;
+    font-style: normal; font-size: 28px; color: #8d929a; vertical-align: middle; }
+  #lobby .game.focus i.on { border-color: #f2b24c; color: #f2b24c; }
+  #lobby .desc { position: absolute; left: 1040px; top: 730px; width: 768px; font-size: 28px; color: #8d929a; line-height: 1.35; }
+
+  /* Game */
+  #gameBox { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+  .hint { position: absolute; left: 112px; bottom: 64px; font-size: 30px; color: #8d929a; }
+  .key { display: inline-block; border: 2px solid #4a4d53; border-radius: 10px; padding: 2px 16px; margin: 0 16px 0 0;
+    color: #f3f3f1; font-weight: 600; font-size: 26px; vertical-align: 2px; }
+  .key.second { margin-left: 48px; }
+  .notice { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; line-height: 1080px; text-align: center;
+    font-size: 48px; font-weight: 300; background: rgba(16, 17, 19, .92); display: none; }
+  .notice.on { display: block; }
+  .toast { position: absolute; left: 112px; top: 210px; font-size: 32px; color: #e5484d; }
+</style>
+</head>
+<body>
+
+<div class="screen on" id="lobby">
+  <div class="title"><div class="label">GAMES</div><h1>Play together</h1></div>
+  <div class="clock" id="clock"></div>
+  <div class="toast" id="toast"></div>
+  <div class="join">
+    <div class="label">ON YOUR PHONE, OPEN</div>
+    <div class="addr" id="addr">...</div>
+    <div class="label">ROOM CODE</div>
+    <div class="code" id="code">----</div>
+  </div>
+  <div class="people">
+    <div class="label" id="peopleLabel">PLAYERS</div>
+    <div id="people"></div>
+  </div>
+  <div class="list" id="list"></div>
+  <div class="desc" id="desc"></div>
+  <div class="hint"><span class="key">OK</span>Start the game<span class="key second">BACK</span>Home Screen</div>
+</div>
+
+<div class="screen" id="playing">
+  <div id="gameBox"></div>
+  <div class="hint"><span class="key">OK</span><span id="okText">Next round</span><span class="key second">BACK</span>End the game</div>
+</div>
+
+<div class="notice" id="notice"></div>
+
+<script>
+  window.TVGAMES = {};
+  // The TV has no developer console: send script errors to the hub log.
+  window.onerror = function (msg, src, line) {
+    try {
+      var x = new XMLHttpRequest();
+      x.open("POST", "http://127.0.0.1:8765/api/log", true);
+      x.setRequestHeader("Content-Type", "application/json");
+      x.send(JSON.stringify({ message: "games: " + msg + " @" + String(src).split("/").pop() + ":" + line }));
+    } catch (e) {}
+  };
+</script>
+<script src="sound.js"></script>
+<script src="games/buzzer.js"></script>
+<script src="games/quiz.js"></script>
+<script src="games/kit.js"></script>
+<script src="games/hop.js"></script>
+<script src="games/blocks.js"></script>
+<script src="games/snake.js"></script>
+<script>
+(function () {
+  var API = "http://127.0.0.1:8765";
+  var KEY = { LEFT: 37, UP: 38, RIGHT: 39, DOWN: 40, OK: 13, BACK: 461 };
+
+  function $(id) { return document.getElementById(id); }
+  function pad(n) { return n < 10 ? "0" + n : String(n); }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text) e.appendChild(document.createTextNode(text));
+    return e;
+  }
+
+  function clear(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function tick() {
+    var d = new Date();
+    $("clock").textContent = pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+
+  var toastTimer = null;
+  function toast(text) {
+    $("toast").textContent = text;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { $("toast").textContent = ""; }, 5000);
+  }
+
+  function notice(text) {
+    $("notice").textContent = text || "";
+    $("notice").className = text ? "notice on" : "notice";
+  }
+
+  // Connection to the hub: HTTP long-polls, not a WebSocket. On webOS 1.4 the web engine
+  // stops sending WebSocket handshakes after a while, while plain HTTP keeps working.
+  // Each poll returns as soon as the room changes (or after 20 s); then the next one starts.
+
+  var leaving = false;
+  var room = null;
+  var version = 0;
+  var stateVersion = -1;
+
+  // Games that run on this screen (Sky Hop) report what happened here.
+  // A lost report would leave a bird flying on the hub, so it is sent again a few times.
+  window.TVHub = {
+    report: function (data) {
+      (function attempt(n) {
+        request("POST", "/api/games/tv", { t: "report", data: data }, function (status) {
+          if (status !== 200 && n < 5 && !leaving) setTimeout(function () { attempt(n + 1); }, 800);
+        });
+      })(0);
+    }
+  };
+
+  function request(method, path, body, done) {
+    var x = new XMLHttpRequest();
+    x.open(method, API + path, true);
+    x.timeout = 30000;
+    if (body) x.setRequestHeader("Content-Type", "application/json");
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      var data = null;
+      try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
+      done(x.status, data);
+    };
+    x.send(body ? JSON.stringify(body) : null);
+  }
+
+  function send(obj) {
+    request("POST", "/api/games/tv", obj, function () {});
+  }
+
+  function connect() {
+    if (leaving) return;
+    request("GET", "/api/games/tv?since=" + version, null, function (status, data) {
+      if (leaving) return;
+      if (status !== 200 || !data) {
+        notice("Connecting to the hub...");
+        return setTimeout(connect, 2000);
+      }
+      notice("");
+      version = data.version;
+      // A script error in a game must not stop the polls: the room would close.
+      try {
+        for (var i = 0; i < data.errors.length; i++) toast(data.errors[i]);
+        // Draw again only when the room changed; taps come as events and do not redraw.
+        if (data.room && (data.stateVersion !== stateVersion || !room || data.room.code !== room.code)) {
+          stateVersion = data.stateVersion;
+          room = data.room;
+          render();
+        }
+        var game = room && room.game && window.TVGAMES[room.game];
+        if (game && game.onEvent) {
+          for (var j = 0; j < data.events.length; j++) game.onEvent(data.events[j]);
+        }
+      } catch (e) {
+        if (window.onerror) window.onerror(String(e && e.message || e), "games.html", 0);
+      }
+      connect();
+    });
+  }
+
+  // Lobby
+
+  var MODES = { solo: "Solo", multi: "Together" };
+  var focusIndex = 0;
+  var listKey = "";
+  var choices = []; // one row per game and mode
+  var lastConnected = -1;
+
+  function renderLobby() {
+    $("addr").textContent = room.address ? room.address.replace(/^http:\/\//, "") : "the address of this TV, port 8765, /play";
+    $("code").textContent = room.code;
+    var connected = 0;
+    var box = $("people");
+    clear(box);
+    for (var i = 0; i < room.players.length; i++) {
+      var p = room.players[i];
+      if (p.connected) connected++;
+      var row = el("div", "row" + (p.connected ? "" : " off"));
+      var dot = el("span", "dot");
+      dot.style.background = p.color;
+      row.appendChild(dot);
+      row.appendChild(document.createTextNode(p.name));
+      box.appendChild(row);
+    }
+    if (!room.players.length) box.appendChild(el("div", "none", "Nobody yet. Join with the code above."));
+    $("peopleLabel").textContent = "PLAYERS (" + connected + " OF 8)";
+    if (lastConnected >= 0 && connected > lastConnected) TVSound.play("join");
+    lastConnected = connected;
+    var key = room.games.map(function (g) { return g.id + ":" + g.modes.join("+"); }).join(",");
+    if (key !== listKey) {
+      listKey = key;
+      choices = [];
+      var list = $("list");
+      clear(list);
+      // One row per game; the modes sit side by side in it (left and right pick one).
+      for (var j = 0; j < room.games.length; j++) {
+        var g = room.games[j];
+        var row = el("div", "game");
+        row.appendChild(el("b", null, g.title));
+        for (var m = 0; m < g.modes.length; m++) {
+          var chip = el("i", null, MODES[g.modes[m]] || g.modes[m]);
+          chip.onclick = (function (index) { return function () { focusIndex = index; markFocus(); start(); }; })(choices.length);
+          choices.push({ game: g.id, mode: g.modes[m], description: g.description, row: j, chip: chip, rowNode: row });
+          row.appendChild(chip);
+        }
+        list.appendChild(row);
+      }
+      markFocus();
+    }
+  }
+
+  function markFocus() {
+    if (focusIndex > choices.length - 1) focusIndex = Math.max(0, choices.length - 1);
+    var c = choices[focusIndex];
+    for (var i = 0; i < choices.length; i++) {
+      choices[i].rowNode.className = c && choices[i].row === c.row ? "game focus" : "game";
+      choices[i].chip.className = i === focusIndex ? "on" : "";
+    }
+    $("desc").textContent = c ? c.description : "";
+  }
+
+  // Up and down: the same mode in the game above or below. Left and right: the other mode.
+  function moveFocus(key) {
+    var c = choices[focusIndex];
+    if (!c) return;
+    var i;
+    if (key === KEY.LEFT || key === KEY.RIGHT) {
+      i = focusIndex + (key === KEY.LEFT ? -1 : 1);
+      if (choices[i] && choices[i].row === c.row) focusIndex = i;
+    } else {
+      var wanted = c.row + (key === KEY.UP ? -1 : 1);
+      for (i = 0; i < choices.length; i++) {
+        if (choices[i].row === wanted && choices[i].mode === c.mode) { focusIndex = i; break; }
+      }
+    }
+    markFocus();
+  }
+
+  // From the TV remote: the questions come in the TV's own language.
+  function start() {
+    var c = choices[focusIndex];
+    if (c) send({ t: "start", game: c.game, mode: c.mode, lang: navigator.language || "en" });
+  }
+
+  // Game
+
+  function renderGame() {
+    var game = window.TVGAMES[room.game];
+    if (!game) {
+      toast("This game has no TV screen");
+      return;
+    }
+    game.render($("gameBox"), room.view, room.players);
+    $("okText").textContent = game.okText || "Next";
+  }
+
+  function render() {
+    var inGame = !!room.game;
+    $("lobby").className = inGame ? "screen" : "screen on";
+    $("playing").className = inGame ? "screen on" : "screen";
+    if (inGame) renderGame();
+    else {
+      // Removing the scene stops the game's timers (they check that it is still on the page).
+      clear($("gameBox"));
+      renderLobby();
+    }
+  }
+
+  function goHome() {
+    leaving = true;
+    send({ t: "close" });
+    setTimeout(function () { location.href = "index.html"; }, 300);
+  }
+
+  document.addEventListener("keydown", function (e) {
+    var k = e.keyCode;
+    var inGame = room && room.game;
+    if (k === KEY.BACK || k === 8 || k === 27) {
+      if (inGame) send({ t: "stop" });
+      else goHome();
+    } else if (k === KEY.OK) {
+      if (inGame) send({ t: "host", data: { next: true } });
+      else start();
+    } else if (!inGame && (k === KEY.UP || k === KEY.DOWN || k === KEY.LEFT || k === KEY.RIGHT)) {
+      moveFocus(k);
+    } else {
+      return;
+    }
+    e.preventDefault();
+  }, false);
+
+  tick();
+  setInterval(tick, 5000);
+  connect();
+})();
+</script>
+</body>
+</html>

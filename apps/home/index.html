@@ -1,0 +1,526 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Home Screen</title>
+<!--
+  Home Screen of the TV hub at 1920x1080. Starts the hub service, then shows:
+  - the clock, the assistant state and the phone address;
+  - big app tiles (OK opens the app);
+  - what is on now on four channels, from the guide cache (OK switches to the channel);
+  - free memory and storage, and the next task;
+  - the answer screen on top when a guide or web answer comes from the phone
+    (Back or 60 seconds closes it).
+  ES5 only, no flexbox or grid: the web engine is WebKit 537.
+-->
+<style>
+  /* Museo Sans ships with the TV; the files give fixed weights. */
+  @font-face { font-family: "TV Sans"; font-weight: 300; src: url("file:///usr/share/fonts/MuseoSansThin.ttf"); }
+  @font-face { font-family: "TV Sans"; font-weight: 400; src: url("file:///usr/share/fonts/MuseoSansLight.ttf"); }
+  @font-face { font-family: "TV Sans"; font-weight: 600; src: url("file:///usr/share/fonts/MuseoSansMedium.ttf"); }
+  @font-face { font-family: "TV Sans"; font-weight: 700; src: url("file:///usr/share/fonts/MuseoSansBold.ttf"); }
+
+  html, body { margin: 0; width: 1920px; background: #101113; }
+  html { overflow: hidden; }
+  body { position: relative; min-height: 1080px; color: #f3f3f1; font-family: "TV Sans", "Museo Sans", "LG Display", sans-serif; font-weight: 400; }
+  .muted { color: #8d929a; }
+  .label { font-size: 24px; font-weight: 600; letter-spacing: 3px; color: #8d929a; }
+  .dot { display: inline-block; width: 14px; height: 14px; border-radius: 7px; background: #e5484d; margin-right: 14px; vertical-align: 3px; }
+  .dot.ok { background: #3fb27f; }
+  .page { padding: 56px 112px 80px; }
+
+  /* Header */
+  /* A compact header, so two rows of apps and the start of "On now" fit on the first screen. */
+  .top { position: relative; height: 190px; }
+  .clock { font-size: 128px; font-weight: 300; letter-spacing: -3px; line-height: 1; }
+  .date { margin: 14px 0 0 4px; font-size: 34px; color: #8d929a; }
+  .ready { position: absolute; right: 0; top: 18px; width: 1000px; text-align: right; font-size: 30px; line-height: 1.6; }
+
+  /* App tiles */
+  .section { margin-top: 30px; }
+  .section .label { margin-bottom: 20px; }
+  .tiles { font-size: 0; }
+  .tile { display: inline-block; vertical-align: top; width: 259px; height: 196px; margin: 0 28px 24px 0;
+    -webkit-box-sizing: border-box; box-sizing: border-box; padding-top: 26px; text-align: center;
+    background: #1a1c20; border: 4px solid transparent; border-radius: 22px; }
+  .tile:nth-child(6n) { margin-right: 0; }
+  .tile img, .tile .letter { width: 96px; height: 96px; }
+  .tile .letter { display: inline-block; line-height: 96px; border-radius: 48px; background: #2a2d33; font-size: 48px; color: #f3f3f1; }
+  .tile .name { margin-top: 14px; padding: 0 14px; font-size: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile.focus { border-color: #f2b24c; background: #22252a; }
+  .empty { font-size: 34px; color: #8d929a; line-height: 1.4; }
+
+  /* On now */
+  table.now { width: 1696px; border-collapse: collapse; table-layout: fixed; }
+  table.now td { height: 112px; vertical-align: middle; border-top: 2px solid #25272b; padding: 0; }
+  table.now tr:first-child td { border-top: 0; }
+  table.now tr.focus td { background: #1a1c20; }
+  table.now tr.focus td.num { box-shadow: inset 6px 0 0 #f2b24c; }
+  .num { width: 104px; padding-left: 24px !important; font-size: 34px; color: #8d929a; }
+  .chan { width: 420px; font-size: 40px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 32px !important; }
+  .prog { width: 700px; padding-right: 48px !important; }
+  .prog .title { font-size: 40px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 652px; }
+  .bar { position: relative; height: 4px; width: 652px; background: #2c2e33; margin-top: 16px; border-radius: 2px; }
+  .bar i { position: absolute; left: 0; top: 0; height: 4px; background: #f2b24c; border-radius: 2px; }
+  .next { font-size: 30px; color: #8d929a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 24px !important; }
+  .next b { color: #f3f3f1; font-weight: 600; margin-right: 18px; }
+
+  /* Footer */
+  .foot { position: relative; margin-top: 44px; padding-top: 34px; border-top: 2px solid #25272b; font-size: 28px; color: #8d929a; white-space: nowrap; }
+  .foot .right { position: absolute; right: 0; top: 34px; }
+
+  /* Busy message while an app or channel opens */
+  .busy { display: none; position: fixed; left: 0; top: 0; width: 1920px; height: 1080px; background: rgba(16, 17, 19, .9);
+    font-size: 52px; font-weight: 300; text-align: center; line-height: 1080px; }
+  .busy.on { display: block; }
+
+  /* Answer screen */
+  .answer { display: none; position: fixed; left: 0; top: 0; width: 1920px; height: 1080px; background: #101113; }
+  .answer.on { display: block; }
+  .asked { position: absolute; left: 112px; top: 92px; }
+  .question { position: absolute; left: 112px; top: 136px; width: 1400px; font-size: 44px; color: #b9bdc4;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .smallclock { position: absolute; right: 112px; top: 96px; font-size: 52px; font-weight: 300; }
+  .abody { position: absolute; left: 112px; top: 288px; width: 1560px; }
+  .reply { font-size: 68px; font-weight: 300; line-height: 1.3; }
+  .reply.long { font-size: 54px; }
+  .reply.longer { font-size: 44px; }
+  table.list { margin-top: 64px; border-collapse: collapse; }
+  table.list td { height: 84px; padding: 0; vertical-align: middle; font-size: 44px; white-space: nowrap; }
+  .time { width: 330px; font-weight: 600; color: #f2b24c; }
+  .pname { max-width: 1000px; overflow: hidden; text-overflow: ellipsis; }
+  .live { font-size: 28px; color: #8d929a; padding-left: 36px !important; }
+  .live .dot { background: #f2b24c; margin-right: 12px; }
+  .countdown { position: absolute; left: 112px; top: 950px; width: 1696px; height: 2px; background: #25272b; }
+  .countdown i { position: absolute; left: 0; top: 0; height: 2px; background: #8d929a; }
+  .hint { position: absolute; left: 112px; top: 984px; font-size: 30px; color: #8d929a; }
+  .key { display: inline-block; border: 2px solid #4a4d53; border-radius: 10px; padding: 2px 16px; margin-right: 16px;
+    color: #f3f3f1; font-weight: 600; font-size: 26px; vertical-align: 2px; }
+  .closes { position: absolute; right: 112px; top: 984px; font-size: 30px; color: #8d929a; }
+</style>
+</head>
+<body>
+
+<div class="page" id="page">
+  <div class="top">
+    <div class="clock" id="clock">--:--</div>
+    <div class="date" id="date"></div>
+    <div class="ready"><span class="dot" id="dot"></span><span id="state">Starting...</span><br><span class="muted" id="address"></span></div>
+  </div>
+
+  <div class="section">
+    <div class="label">APPS</div>
+    <div class="tiles" id="tiles"></div>
+    <div class="empty" id="tilesEmpty">Loading the apps...</div>
+  </div>
+
+  <div class="section">
+    <div class="label">ON NOW</div>
+    <table class="now" id="nowRows"></table>
+    <div class="empty" id="nowEmpty">Open Live TV once, and what is on now appears here.</div>
+  </div>
+
+  <div class="foot"><span id="health"></span><span class="right" id="task"></span></div>
+</div>
+
+<div class="busy" id="busy"></div>
+
+<div class="answer" id="answer">
+  <div class="label asked">YOU ASKED</div>
+  <div class="question" id="question"></div>
+  <div class="smallclock" id="smallclock"></div>
+  <div class="abody">
+    <div class="reply" id="reply"></div>
+    <table class="list" id="listRows"></table>
+  </div>
+  <div class="countdown"><i id="countBar"></i></div>
+  <div class="hint"><span class="key">BACK</span><span id="backText">Return to TV</span></div>
+  <div class="closes" id="closes"></div>
+</div>
+
+<script>
+(function () {
+  var API = "http://127.0.0.1:8765";
+  var ANSWER_SECONDS = 60;
+  var COLUMNS = 6;
+  var KEY = { LEFT: 37, UP: 38, RIGHT: 39, DOWN: 40, OK: 13, BACK: 461 };
+  var DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  var ACTIONS = { toast: "Message", freeMemory: "Free memory", volumeDown: "Lower the volume", powerOff: "Turn the TV off" };
+
+  function $(id) { return document.getElementById(id); }
+  function pad(n) { return n < 10 ? "0" + n : String(n); }
+  function hhmm(d) { return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text) e.appendChild(document.createTextNode(text));
+    return e;
+  }
+
+  function clear(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function request(method, path, body, done) {
+    var x = new XMLHttpRequest();
+    x.open(method, API + path, true);
+    if (body) x.setRequestHeader("Content-Type", "application/json");
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      var data = null;
+      try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
+      done(x.status, data);
+    };
+    x.send(body ? JSON.stringify(body) : null);
+  }
+
+  // The TV has no developer console: send script errors to the hub log.
+  window.onerror = function (msg, src, line) {
+    request("POST", "/api/log", { message: "error: " + msg + " @" + line }, function () {});
+  };
+
+  // Start the hub service; it keeps running after this app closes.
+  if (typeof PalmServiceBridge !== "undefined") {
+    var bridge = new PalmServiceBridge();
+    bridge.onservicecallback = function () {};
+    bridge.call("luna://com.lgtvfastest.home.service/start", "{}");
+    window.hubBridge = bridge; // keep a reference so the call is not collected
+  }
+
+  // Clock
+
+  function tick() {
+    var d = new Date();
+    $("clock").textContent = hhmm(d);
+    $("smallclock").textContent = hhmm(d);
+    $("date").textContent = DAYS[d.getDay()] + ", " + d.getDate() + " " + MONTHS[d.getMonth()];
+  }
+
+  // Focus: the app tiles, then the channel rows. Arrows move, OK opens.
+
+  var tiles = [];
+  var rows = [];
+  var focus = { area: "tiles", index: 0 };
+
+  function focusedElement() {
+    var list = focus.area === "tiles" ? tiles : rows;
+    return list[focus.index] || null;
+  }
+
+  function setFocus(area, index) {
+    var list = area === "tiles" ? tiles : rows;
+    if (!list.length) return;
+    index = Math.max(0, Math.min(list.length - 1, index));
+    var old = focusedElement();
+    if (old) old.className = old.className.replace(/\s*focus/g, "");
+    focus = { area: area, index: index };
+    var now = focusedElement();
+    now.className += " focus";
+    keepVisible(now);
+  }
+
+  // Scroll the page so the focused item is on screen, with some room around it.
+  function keepVisible(node) {
+    var top = 0;
+    for (var n = node; n; n = n.offsetParent) top += n.offsetTop;
+    var bottom = top + node.offsetHeight;
+    var y = window.pageYOffset;
+    if (top < y + 120) window.scrollTo(0, Math.max(0, top - 300));
+    else if (bottom > y + 1080 - 120) window.scrollTo(0, bottom - 1080 + 200);
+  }
+
+  function move(key) {
+    var i = focus.index;
+    if (focus.area === "tiles") {
+      if (key === KEY.LEFT) return setFocus("tiles", i - 1);
+      if (key === KEY.RIGHT) return setFocus("tiles", i + 1);
+      if (key === KEY.UP) return i >= COLUMNS ? setFocus("tiles", i - COLUMNS) : window.scrollTo(0, 0);
+      if (key === KEY.DOWN) {
+        if (i + COLUMNS < tiles.length) return setFocus("tiles", i + COLUMNS);
+        // The row above a short last row: go to its last tile first.
+        if (Math.floor(i / COLUMNS) < Math.floor((tiles.length - 1) / COLUMNS)) return setFocus("tiles", tiles.length - 1);
+        if (rows.length) return setFocus("rows", 0);
+      }
+      return;
+    }
+    if (key === KEY.UP) {
+      if (i > 0) return setFocus("rows", i - 1);
+      if (tiles.length) return setFocus("tiles", Math.floor((tiles.length - 1) / COLUMNS) * COLUMNS);
+    }
+    if (key === KEY.DOWN) setFocus("rows", i + 1);
+  }
+
+  var busyTimer = null;
+  function busy(text, ms) {
+    var b = $("busy");
+    b.textContent = text;
+    b.className = "busy on";
+    clearTimeout(busyTimer);
+    busyTimer = setTimeout(function () { b.className = "busy"; }, ms);
+  }
+
+  function activate() {
+    var node = focusedElement();
+    if (!node) return;
+    if (focus.area === "tiles" && node.getAttribute("data-id") === GAMES_TILE.id) {
+      location.href = "games.html";
+      return;
+    }
+    if (focus.area === "tiles") {
+      busy("Opening " + node.getAttribute("data-title") + "...", 4000);
+      return request("POST", "/api/cmd", { cmd: "launch", arg: node.getAttribute("data-id") }, function (status, data) {
+        if (status !== 200) busy((data && data.error) || "Could not open the app", 2500);
+      });
+    }
+    busy("Switching to " + node.getAttribute("data-name") + "...", 5000);
+    request("POST", "/api/cmd", { cmd: "openChannel", arg: node.getAttribute("data-id") }, function (status, data) {
+      if (status !== 200) busy((data && data.error) || "Could not switch the channel", 2500);
+    });
+  }
+
+  function hoverable(node, area, index) {
+    node.onmouseover = function () { if (focus.area !== area || focus.index !== index) setFocus(area, index); };
+    node.onclick = function () {
+      setFocus(area, index);
+      activate();
+    };
+  }
+
+  // App tiles
+
+  var appsKey = "";
+  // The first tile opens the Games screen of this app; the others are TV apps.
+  var GAMES_TILE = { id: "__games", title: "Games", icon: "games.svg", local: true };
+
+  // loaded: the TV answered (its list may be empty); before that, "Loading" stays visible.
+  function renderApps(apps, loaded) {
+    if (loaded) $("tilesEmpty").style.display = "none";
+    apps = [GAMES_TILE].concat(apps);
+    var key = apps.map(function (a) { return a.id; }).join(",");
+    if (key === appsKey) return;
+    appsKey = key;
+    var box = $("tiles");
+    clear(box);
+    tiles = [];
+    for (var i = 0; i < apps.length; i++) {
+      var a = apps[i];
+      var t = el("div", "tile");
+      t.setAttribute("data-id", a.id);
+      t.setAttribute("data-title", a.title);
+      var letter = el("div", "letter", a.title.charAt(0));
+      if (a.icon) {
+        var img = document.createElement("img");
+        img.alt = "";
+        // An icon that fails to load shows the first letter instead of a broken image.
+        img.onerror = (function (image, fallback) {
+          return function () { if (image.parentNode) image.parentNode.replaceChild(fallback, image); };
+        })(img, letter);
+        img.src = a.local ? a.icon : API + a.icon;
+        t.appendChild(img);
+      } else {
+        t.appendChild(letter);
+      }
+      t.appendChild(el("div", "name", a.title));
+      hoverable(t, "tiles", i);
+      box.appendChild(t);
+      tiles.push(t);
+    }
+    if (focus.area === "tiles" && tiles.length) setFocus("tiles", Math.min(focus.index, tiles.length - 1));
+  }
+
+  function pollApps(attempt) {
+    request("GET", "/api/state", null, function (status, s) {
+      if (status === 200 && s && s.connected) {
+        renderApps(s.apps || [], true);
+        return setTimeout(function () { pollApps(0); }, 5 * 60000);
+      }
+      if (attempt >= 20) {
+        $("tilesEmpty").textContent = "The apps could not be loaded";
+        $("tilesEmpty").style.display = "block";
+      }
+      setTimeout(function () { pollApps(attempt + 1); }, attempt < 20 ? 1000 : 15000);
+    });
+  }
+
+  // On now
+
+  function renderNow(data) {
+    var table = $("nowRows");
+    clear(table);
+    rows = [];
+    var list = (data && data.channels) || [];
+    $("nowEmpty").style.display = list.length ? "none" : "block";
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      var tr = el("tr");
+      tr.setAttribute("data-id", c.id);
+      tr.setAttribute("data-name", c.name);
+      tr.appendChild(el("td", "num", c.number));
+      tr.appendChild(el("td", "chan", c.name));
+      var prog = el("td", "prog");
+      if (c.now) {
+        prog.appendChild(el("div", "title", c.now.name));
+        var bar = el("div", "bar"), fill = el("i");
+        fill.style.width = Math.round(Math.max(0, Math.min(100, c.now.progress)) * 6.52) + "px";
+        bar.appendChild(fill);
+        prog.appendChild(bar);
+      } else {
+        prog.appendChild(el("div", "title muted", "No program now"));
+      }
+      tr.appendChild(prog);
+      var next = el("td", "next");
+      if (c.next) {
+        next.appendChild(el("b", null, c.next.start));
+        next.appendChild(document.createTextNode(c.next.name));
+      }
+      tr.appendChild(next);
+      hoverable(tr, "rows", i);
+      table.appendChild(tr);
+      rows.push(tr);
+    }
+    // The table was rebuilt: put the focus mark back on the same row.
+    if (focus.area === "rows") {
+      if (rows.length) {
+        focus.index = Math.min(focus.index, rows.length - 1);
+        rows[focus.index].className += " focus";
+      } else if (tiles.length) {
+        focus = { area: "tiles", index: 0 };
+        setFocus("tiles", 0);
+      }
+    }
+  }
+
+  function pollNow() {
+    request("GET", "/api/now", null, function (status, data) {
+      if (status === 200) renderNow(data);
+      setTimeout(pollNow, status === 200 ? 60000 : 5000);
+    });
+  }
+
+  // Health and next task
+
+  function renderHealth(h) {
+    $("dot").className = "dot ok";
+    $("state").textContent = "Assistant ready";
+    $("address").textContent = h.address ? "Phone: " + h.address.replace(/^http:\/\//, "") : "";
+    var parts = [];
+    if (h.now) parts.push("Memory " + h.now.availableMB + " MB free");
+    if (h.disk) parts.push("Storage " + h.disk.freeMB + " MB free");
+    $("health").textContent = parts.join("   ·   ");
+    var next = (h.upcoming || [])[0];
+    if (!next) {
+      $("task").textContent = "No tasks planned";
+      return;
+    }
+    var at = new Date(next.at), today = new Date();
+    var day = at.toDateString() === today.toDateString() ? "" : DAYS[at.getDay()] + " ";
+    $("task").textContent = "Next task: " + day + hhmm(at) + "  " + (next.text || ACTIONS[next.action] || next.action);
+  }
+
+  function pollHealth(attempt) {
+    request("GET", "/api/health", null, function (status, h) {
+      if (status === 200 && h) {
+        renderHealth(h);
+        setTimeout(function () { pollHealth(0); }, 30000);
+      } else {
+        $("dot").className = "dot";
+        $("state").textContent = attempt < 20 ? "Starting..." : "The hub service does not answer";
+        setTimeout(function () { pollHealth(attempt + 1); }, attempt < 20 ? 1000 : 10000);
+      }
+    });
+  }
+
+  // Answer screen
+
+  var shownId = null;
+  var current = null;
+  var left = 0;
+  var countTimer = null;
+
+  function showAnswer(a) {
+    current = a;
+    shownId = a.id;
+    $("question").textContent = "“" + a.question + "”";
+    var reply = $("reply");
+    reply.textContent = a.reply;
+    reply.className = "reply" + (a.reply.length > 260 ? " longer" : a.reply.length > 140 ? " long" : "");
+    var table = $("listRows");
+    clear(table);
+    // Long replies leave room for fewer programs.
+    var max = a.reply.length > 260 ? 2 : a.reply.length > 140 ? 3 : 4;
+    for (var i = 0; i < a.programs.length && i < max; i++) {
+      var p = a.programs[i];
+      var tr = el("tr");
+      tr.appendChild(el("td", "time", p.start + " – " + p.end));
+      var name = el("td");
+      name.appendChild(el("div", "pname", p.name));
+      tr.appendChild(name);
+      var live = el("td", "live");
+      if (p.onNow) {
+        live.appendChild(el("span", "dot"));
+        live.appendChild(document.createTextNode("On now"));
+      }
+      tr.appendChild(live);
+      table.appendChild(tr);
+    }
+    $("backText").textContent = a.returnTo ? "Return to TV" : "Close";
+    $("answer").className = "answer on";
+    left = ANSWER_SECONDS;
+    countdown();
+  }
+
+  function countdown() {
+    clearTimeout(countTimer);
+    if (!current) return;
+    if (left <= 0) return closeAnswer();
+    $("closes").textContent = "Closes in " + left + " s";
+    $("countBar").style.width = Math.round(left * 1696 / ANSWER_SECONDS) + "px";
+    left--;
+    countTimer = setTimeout(countdown, 1000);
+  }
+
+  function closeAnswer() {
+    if (!current) return;
+    var id = current.id;
+    current = null;
+    clearTimeout(countTimer);
+    $("answer").className = "answer";
+    request("POST", "/api/answer/close", { id: id }, function () {});
+  }
+
+  function pollAnswer() {
+    request("GET", "/api/answer", null, function (status, data) {
+      var a = status === 200 && data ? data.answer : null;
+      if (a && a.id !== shownId) showAnswer(a);
+      setTimeout(pollAnswer, 1500);
+    });
+  }
+
+  document.addEventListener("keydown", function (e) {
+    var k = e.keyCode;
+    if (current) {
+      if (k === KEY.BACK || k === 8 || k === 27) {
+        e.preventDefault();
+        closeAnswer();
+      }
+      return;
+    }
+    if (k === KEY.LEFT || k === KEY.RIGHT || k === KEY.UP || k === KEY.DOWN) move(k);
+    else if (k === KEY.OK) activate();
+    else return;
+    e.preventDefault();
+  }, false);
+
+  tick();
+  setInterval(tick, 5000);
+  renderApps([], false); // the Games tile, before the TV apps arrive
+  pollApps(0);
+  pollNow();
+  pollHealth(0);
+  pollAnswer();
+})();
+</script>
+</body>
+</html>

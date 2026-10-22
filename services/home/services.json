@@ -1,0 +1,10 @@
+{
+  "id": "com.lgtvfastest.home.service",
+  "description": "Runs the TV hub: phone remote, Claude assistant, health monitor and scheduler",
+  "services": [
+    {
+      "name": "com.lgtvfastest.home.service",
+      "description": "Phone remote, Claude assistant, health monitor and scheduler"
+    }
+  ]
+}

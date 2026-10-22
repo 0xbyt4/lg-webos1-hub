@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#111214">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Play on the TV</title>
+<link rel="icon" type="image/png" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<!--
+  Phone page for the TV games. Needs no access code: it can only join the room that the
+  TV's Games screen shows and send game input. Each game draws its own controller from
+  /games/<id>.js, which sets window.GAMES[id] = { render(box, view, send, me) }.
+-->
+<style>
+  :root {
+    --bg: #111214; --panel: #1b1d21; --field: #262a30; --line: #2f343b;
+    --text: #eceef1; --muted: #8b919a; --accent: #4f8cff; --ok: #30a46c; --warn: #f2b84b; --danger: #e5484d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+  body {
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: max(14px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+    max-width: 520px; margin: 0 auto; display: flex; flex-direction: column;
+    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  [hidden] { display: none !important; }
+  h1 { font-size: 22px; margin: 6px 0 4px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  input {
+    font: inherit; font-size: 18px; color: var(--text); background: var(--field); border: 0; border-radius: 12px;
+    min-height: 52px; padding: 0 14px; width: 100%; -webkit-user-select: text; user-select: text;
+  }
+  #code { font-size: 28px; letter-spacing: .3em; text-align: center; }
+  button {
+    font: inherit; color: var(--text); background: var(--field); border: 0; border-radius: 12px;
+    min-height: 48px; padding: 0 16px; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #fff; width: 100%; margin-top: 18px; min-height: 54px; font-weight: 600; }
+  .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .bar .me { flex: 1; min-width: 0; }
+  .bar .me b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .swatch { width: 14px; height: 14px; border-radius: 50%; flex: none; }
+  .bar button { min-height: 38px; font-size: 14px; }
+  .box { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .waiting { margin: auto 0; text-align: center; }
+  .waiting h2 { font-size: 22px; margin: 0 0 8px; }
+  .players { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 18px; }
+  .player { display: flex; align-items: center; gap: 6px; background: var(--panel); border-radius: 20px; padding: 6px 12px; font-size: 14px; }
+  .player.off { opacity: .45; }
+  .hostbar { display: flex; gap: 8px; margin-top: 12px; }
+  .hostbar button { flex: 1; min-height: 48px; }
+  .hostbar .primary { margin-top: 0; }
+  .start { margin-top: 22px; text-align: left; }
+  .start .g { background: var(--panel); border-radius: 16px; padding: 14px; margin-top: 12px; }
+  .start .g b { font-size: 18px; }
+  .start .g p { margin: 4px 0 10px; }
+  .start .g input { min-height: 44px; font-size: 16px; }
+  .start .g select { font: inherit; font-size: 16px; color: var(--text); background: var(--field); border: 0; border-radius: 10px;
+    min-height: 44px; padding: 0 10px; width: 100%; margin-bottom: 10px; }
+  .start .modes { display: flex; gap: 8px; }
+  .start .modes button { flex: 1; }
+  .start .modes .primary { margin-top: 0; min-height: 48px; }
+  .toast {
+    position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+    background: var(--danger); color: #fff; padding: 10px 16px; border-radius: 12px; max-width: calc(100% - 32px);
+    opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<form id="joinForm" autocomplete="off">
+  <h1>Play on the TV</h1>
+  <p class="muted">Open <b>Games</b> on the TV. It shows a room code.</p>
+  <label for="code">Room code</label>
+  <input id="code" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required>
+  <label for="name">Your name</label>
+  <input id="name" maxlength="16" required autocomplete="nickname">
+  <button class="primary" type="submit">Join</button>
+</form>
+
+<div id="game" class="box" hidden>
+  <div class="bar">
+    <span class="swatch" id="swatch"></span>
+    <div class="me"><b id="meName"></b><span class="muted" id="status"></span></div>
+    <button type="button" id="leave">Leave</button>
+  </div>
+  <div class="box" id="box"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/sound.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  window.GAMES = window.GAMES || {};
+  let ws = null, me = null, room = null, wanted = false, pingTimer, retryTimer, pingSent = 0, rtt = null, toastTimer;
+
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 3000);
+  }
+
+  // Name and room code are remembered per phone; the player token per browser tab, so two
+  // tabs (or two people on one phone) are two players.
+  function store(key, value, tabOnly) {
+    const s = tabOnly ? sessionStorage : localStorage;
+    try { value === undefined ? s.removeItem(key) : s.setItem(key, value); } catch {}
+  }
+  function load(key, tabOnly) {
+    try { return (tabOnly ? sessionStorage : localStorage).getItem(key) || ""; } catch { return ""; }
+  }
+
+  const params = new URLSearchParams(location.search);
+  $("code").value = params.get("code") || load("playCode");
+  $("name").value = load("playName");
+
+  function send(obj) {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+  }
+
+  function connect() {
+    clearTimeout(retryTimer);
+    if (ws && ws.readyState <= 1) return; // already open or opening
+    const code = $("code").value.trim();
+    const name = $("name").value.trim();
+    ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+    ws.onopen = () => {
+      // A token from an earlier join of this room keeps the same player (name, color, score).
+      send({ t: "hello", role: "player", code, name, token: load("playToken:" + code, true) || undefined });
+      clearInterval(pingTimer);
+      pingTimer = setInterval(() => { pingSent = performance.now(); send({ t: "ping", id: 1 }); }, 5000);
+    };
+    ws.onmessage = (e) => {
+      const m = JSON.parse(e.data);
+      if (m.t === "joined") {
+        me = m;
+        store("playToken:" + code, m.token, true);
+        store("playCode", code);
+        store("playName", name);
+        $("joinForm").hidden = true;
+        $("game").hidden = false;
+        $("meName").textContent = m.name;
+        $("swatch").style.background = m.color;
+      } else if (m.t === "room") {
+        room = m;
+        render();
+      } else if (m.t === "pong") {
+        rtt = Math.round(performance.now() - pingSent);
+        status();
+      } else if (m.t === "error") {
+        // The hub refused or replaced this connection: stop retrying and show why.
+        wanted = false;
+        if (me) leaveScreen(m.error);
+        else toast(m.error);
+      } else if (m.t === "closed") {
+        wanted = false;
+        leaveScreen("The TV closed the game");
+      }
+    };
+    ws.onclose = () => {
+      clearInterval(pingTimer);
+      // Lost the connection (screen lock, Wi-Fi): try again while the player wants to play.
+      if (wanted) retryTimer = setTimeout(connect, 2000);
+      status();
+    };
+  }
+
+  function status() {
+    const live = ws && ws.readyState === 1;
+    $("status").textContent = live ? (rtt != null ? rtt + " ms to the TV" : "connected") : "reconnecting...";
+  }
+
+  function leaveScreen(message) {
+    if (message) toast(message);
+    me = null;
+    room = null;
+    $("game").hidden = true;
+    $("joinForm").hidden = false;
+  }
+
+  // Next round / End game, under the game, for the host only.
+  function renderHostBar() {
+    let bar = $("hostbar");
+    if (!room.host) {
+      if (bar) bar.remove();
+      return;
+    }
+    if (bar) return;
+    bar = document.createElement("div");
+    bar.id = "hostbar";
+    bar.className = "hostbar";
+    const next = document.createElement("button");
+    next.type = "button";
+    next.textContent = "Next";
+    next.onclick = () => send({ t: "host", data: { next: true } });
+    const end = document.createElement("button");
+    end.type = "button";
+    end.textContent = "End game";
+    end.onclick = () => send({ t: "stop" });
+    bar.append(next, end);
+    $("game").appendChild(bar);
+  }
+
+  let startCard = null; // the host's game cards in the lobby
+  const loading = {};
+  function render() {
+    status();
+    const box = $("box");
+    if (room && room.game && room.watching) {
+      // Someone plays Solo: this phone watches the TV. If the solo player left, this phone
+      // may be host now and needs End game.
+      renderHostBar();
+      box.replaceChildren();
+      const w = document.createElement("div");
+      w.className = "waiting";
+      const h = document.createElement("h2");
+      h.textContent = (room.soloName || "Someone") + " is playing solo";
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = "Watch the TV. You can play when the game ends.";
+      w.append(h, p);
+      box.appendChild(w);
+      return;
+    }
+    if (!room || !room.game) {
+      if ($("hostbar")) $("hostbar").remove();
+      box.replaceChildren();
+      const w = document.createElement("div");
+      w.className = "waiting";
+      const h = document.createElement("h2");
+      h.textContent = "You are in";
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = room && room.host ? "You run the game: start it here, or with OK on the TV remote."
+        : "Wait for " + (room && room.hostName ? room.hostName : "the first player") + " or the TV to start a game.";
+      const list = document.createElement("div");
+      list.className = "players";
+      for (const pl of (room ? room.players : [])) {
+        const chip = document.createElement("span");
+        chip.className = "player" + (pl.connected ? "" : " off");
+        const sw = document.createElement("span");
+        sw.className = "swatch";
+        sw.style.background = pl.color;
+        chip.append(sw, pl.name);
+        list.appendChild(chip);
+      }
+      w.append(h, p, list);
+      // The host starts a game from the phone, so nobody has to switch to the TV remote.
+      if (room && room.host && room.games) {
+        // Keep the same cards while players join, so a typed topic or a choice is not lost.
+        const key = room.games.map((g) => g.id).join(",");
+        if (startCard && startCard.key === key) {
+          w.appendChild(startCard.node);
+          box.appendChild(w);
+          return;
+        }
+        const start = document.createElement("div");
+        start.className = "start";
+        startCard = { key, node: start };
+        const connected = room.players.filter((pl) => pl.connected).length;
+        for (const g of room.games) {
+          const card = document.createElement("div");
+          card.className = "g";
+          const title = document.createElement("b");
+          title.textContent = g.title;
+          const d = document.createElement("p");
+          d.className = "muted";
+          d.textContent = g.description;
+          card.append(title, d);
+          let topic = null, own = null;
+          if (g.topics) {
+            topic = document.createElement("select");
+            for (const t of g.topics) topic.add(new Option(t.label, t.id));
+            if (g.customTopic) topic.add(new Option("Your own topic...", "custom"));
+            card.appendChild(topic);
+          }
+          if (g.customTopic) {
+            // A topic in your own words, like "90s songs" or "our city".
+            own = document.createElement("input");
+            own.maxLength = 60;
+            own.placeholder = "Type a topic, e.g. 90s songs";
+            own.hidden = true;
+            own.style.marginBottom = "10px";
+            topic.addEventListener("change", () => { own.hidden = topic.value !== "custom"; if (!own.hidden) own.focus(); });
+            card.appendChild(own);
+          }
+          const settings = {};
+          for (const [key, options] of Object.entries(g.settings || {})) {
+            const sel = document.createElement("select");
+            options.forEach((o, i) => sel.add(new Option(o.label, String(i))));
+            settings[key] = { sel, options };
+            card.appendChild(sel);
+          }
+          const modes = document.createElement("div");
+          modes.className = "modes";
+          for (const mode of g.modes) {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = mode === "solo" && connected < 2 || mode === "multi" && connected >= 2 ? "primary" : "";
+            b.textContent = mode === "solo" ? "Solo" : "Together";
+            // The questions come in this phone's language.
+            b.onclick = () => {
+              if (topic && topic.value === "custom" && !own.value.trim()) return toast("Type a topic first");
+              const chosen = {};
+              for (const [key, { sel, options }] of Object.entries(settings)) chosen[key] = options[Number(sel.value)].value;
+              send({ t: "start", game: g.id, mode, topic: topic ? topic.value : undefined, topicText: own ? own.value : undefined,
+                settings: chosen, lang: navigator.language });
+            };
+            modes.appendChild(b);
+          }
+          card.appendChild(modes);
+          start.appendChild(card);
+        }
+        w.appendChild(start);
+      }
+      box.appendChild(w);
+      return;
+    }
+    renderHostBar();
+    const game = window.GAMES[room.game];
+    if (game) return game.render(box, room.view, (data) => send({ t: "input", data }), me);
+    if (loading[room.game]) return;
+    loading[room.game] = true;
+    const s = document.createElement("script");
+    s.src = "/games/" + encodeURIComponent(room.game) + ".js";
+    s.onload = render;
+    s.onerror = () => toast("This game could not be loaded");
+    document.head.appendChild(s);
+  }
+
+  // Phone browsers allow sound only after a tap; every tap keeps it allowed.
+  document.addEventListener("pointerdown", () => window.PhoneSound && PhoneSound.unlock(), true);
+
+  $("joinForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (window.PhoneSound) PhoneSound.unlock();
+    wanted = true;
+    if (ws) ws.close();
+    ws = null;
+    connect();
+  });
+
+  $("leave").addEventListener("click", () => {
+    wanted = false;
+    send({ t: "leave" });
+    store("playToken:" + $("code").value.trim(), undefined, true);
+    if (ws) ws.close();
+    leaveScreen();
+  });
+
+  // Back from the lock screen: reconnect at once instead of waiting for the retry.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && wanted && (!ws || ws.readyState > 1)) connect();
+  });
+</script>
+</body>
+</html>

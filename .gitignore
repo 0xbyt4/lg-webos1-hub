@@ -1,0 +1,13 @@
+# Secrets and device keys: never commit
+.env
+.env.*
+!.env.example
+config.local.json
+.tv_key
+.devmode
+
+# Tooling
+__pycache__/
+.ruff_cache/
+node_modules/
+.DS_Store

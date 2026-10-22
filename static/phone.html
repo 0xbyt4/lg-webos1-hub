@@ -1,0 +1,992 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111214">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>TV</title>
+<link rel="icon" type="image/png" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<!-- Phone page of the TV hub: remote, assistant and settings in three tabs. -->
+<style>
+  :root {
+    --bg: #111214; --panel: #1b1d21; --field: #262a30; --line: #2f343b; --key-press: #353a42;
+    --text: #eceef1; --muted: #8b919a; --accent: #4f8cff; --ok: #30a46c; --warn: #f2b84b; --danger: #e5484d;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f2f3f5; --panel: #fff; --field: #eceef1; --line: #dcdfe4; --text: #15171a; --muted: #646a73; --key-press: #d3d7dd; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: max(14px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom));
+    max-width: 520px; margin: 0 auto;
+  }
+  [hidden] { display: none !important; }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); flex: none; }
+  .dot.on { background: var(--ok); }
+  .now { flex: 1; min-width: 0; }
+  .now b { display: block; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .now small { color: var(--muted); }
+  header .pill { flex: none; min-height: 40px; padding: 0 14px; border-radius: 20px; font-size: 14px; }
+  header .power { flex: none; width: 44px; height: 44px; min-height: 0; padding: 0; border-radius: 50%; background: var(--danger); color: #fff;
+    display: flex; align-items: center; justify-content: center; }
+  header .power svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+  .tabs { position: sticky; top: 0; z-index: 5; display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+    background: var(--field); border-radius: 12px; padding: 4px; margin-bottom: 14px; box-shadow: 0 -8px 0 8px var(--bg); }
+  .tabs button { min-height: 38px; background: transparent; border-radius: 9px; font-weight: 500; }
+  .tabs button.active { background: var(--accent); color: #fff; }
+  section { background: var(--panel); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+  h2 { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+  h2 small { float: right; text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stat { background: var(--field); border-radius: 12px; padding: 12px; }
+  .stat b { display: block; font-size: 26px; font-weight: 600; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .stat.low b { color: var(--danger); }
+  svg.chart { width: 100%; height: 90px; display: block; margin-top: 12px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  .events li { font-size: 13px; padding: 7px 0; border-top: 1px solid var(--line); color: var(--muted); }
+  .events li b { color: var(--text); font-weight: 500; }
+  .events li:first-child { border-top: 0; }
+  .sched li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .sched li:first-child { border-top: 0; }
+  .sched .when { font-size: 20px; font-weight: 600; min-width: 62px; }
+  .sched .what { flex: 1; min-width: 0; }
+  .sched .what div { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+  .sched .what small { color: var(--muted); }
+  .sched li.off .when, .sched li.off .what { opacity: .45; }
+  button {
+    font: inherit; color: var(--text); background: var(--field); border: 0; border-radius: 10px;
+    min-height: 40px; padding: 0 14px; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #fff; }
+  button.danger { color: var(--danger); }
+  button.small { min-height: 34px; padding: 0 10px; font-size: 13px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 5px; }
+  input, select {
+    font: inherit; font-size: 16px; color: var(--text); background: var(--field); border: 0; border-radius: 10px;
+    min-height: 42px; padding: 0 12px; width: 100%;
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .days { display: flex; gap: 6px; flex-wrap: wrap; }
+  .days label { margin: 0; }
+  .days input { display: none; }
+  .days span {
+    display: inline-block; min-width: 42px; text-align: center; padding: 8px 0; border-radius: 9px;
+    background: var(--field); color: var(--muted); font-size: 13px; cursor: pointer;
+  }
+  .days input:checked + span { background: var(--accent); color: #fff; }
+  .switch { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; color: var(--text); font-size: 15px; }
+  .switch input { width: 22px; height: 22px; min-height: 0; }
+  .actions { display: flex; gap: 8px; margin-top: 14px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .gate { position: fixed; inset: 0; background: var(--bg); display: none; align-items: center; justify-content: center; padding: 24px; }
+  .gate.show { display: flex; }
+  .gate .box { width: 100%; max-width: 360px; }
+  .gate h1 { font-size: 22px; margin: 0 0 8px; }
+  .chat { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+  .msg { padding: 10px 12px; border-radius: 14px; max-width: 88%; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.me { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.bot { align-self: flex-start; background: var(--field); border-bottom-left-radius: 4px; }
+  .msg.err { align-self: flex-start; background: transparent; color: var(--danger); padding: 4px 0; }
+  .msg .meta { display: block; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .chip { font-size: 12px; background: var(--panel); color: var(--muted); border-radius: 8px; padding: 2px 7px; }
+  .chip.bad { color: var(--danger); }
+  .ask { display: flex; gap: 8px; }
+  .ask input { flex: 1; }
+  .tip { margin: 8px 2px 0; }
+  .examples { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .examples button { min-height: 32px; font-size: 13px; color: var(--muted); }
+  .thinking { color: var(--muted); font-size: 13px; padding: 4px 2px; }
+  .toast {
+    position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+    background: var(--danger); color: #fff; padding: 10px 16px; border-radius: 12px; max-width: calc(100% - 32px);
+    opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  .toast.ok { background: var(--ok); }
+  .toast.show { opacity: 1; }
+
+  /* Remote tab */
+  #tab-remote { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  #tab-remote section { padding: 14px; margin-bottom: 12px; }
+  #tab-remote button {
+    min-height: 52px; padding: 0 10px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center; gap: 6px; touch-action: manipulation;
+  }
+  #tab-remote button:active, #tab-remote button.pressed { background: var(--key-press); }
+  #tab-remote button svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .apps { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .apps::-webkit-scrollbar { display: none; }
+  #tab-remote .app { flex: none; width: 76px; min-height: 88px; flex-direction: column; padding: 8px 4px; font-size: 12px; }
+  .app img { width: 40px; height: 40px; object-fit: contain; }
+  .app span { width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .app.current { outline: 2px solid var(--accent); }
+  .dpad { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 72px); gap: 8px; max-width: 300px; margin: 0 auto; }
+  #tab-remote .dpad button { min-height: 0; height: 100%; }
+  #tab-remote .dpad .ok { background: var(--accent); color: #fff; border-radius: 50%; font-weight: 600; width: 72px; justify-self: center; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--field); border-radius: 12px; padding: 4px; margin-bottom: 12px; }
+  #tab-remote .seg button { min-height: 36px; background: transparent; border-radius: 9px; }
+  #tab-remote .seg button.active { background: var(--accent); color: #fff; }
+  .pad {
+    height: 264px; border-radius: 14px; background: var(--field); touch-action: none;
+    display: flex; align-items: flex-end; justify-content: center; text-align: center;
+    padding: 12px; color: var(--muted); font-size: 12px;
+  }
+  .pad.active { background: var(--key-press); }
+  .krow { display: grid; gap: 8px; margin-top: 10px; }
+  .krow.c4 { grid-template-columns: repeat(4, 1fr); }
+  .krow.c3 { grid-template-columns: repeat(3, 1fr); }
+  .rockers { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: stretch; }
+  .rocker { display: grid; grid-template-rows: 1fr auto 1fr; gap: 6px; }
+  .rocker label { margin: 0; text-align: center; color: var(--muted); font-size: 12px; }
+  #tab-remote .mute { width: 72px; align-self: center; }
+  #tab-remote .mute.on { background: var(--danger); color: #fff; }
+  .kbd { display: flex; gap: 8px; }
+  .kbd input { flex: 1; min-width: 0; min-height: 52px; border-radius: 12px; padding: 0 14px; -webkit-user-select: text; user-select: text; }
+  #tab-remote .kbd button { flex: none; min-width: 64px; }
+  #tab-remote .colors button { min-height: 36px; }
+  details summary { color: var(--muted); cursor: pointer; padding: 4px 0; list-style: none; }
+  details summary::-webkit-details-marker { display: none; }
+  #tab-remote .wide { width: 100%; margin-top: 10px; }
+  #tab-remote .link { display: flex; align-items: center; justify-content: center; min-height: 52px; border-radius: 12px;
+    background: var(--field); color: var(--text); text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <div class="now"><b id="now">Connecting...</b><small id="vol"></small></div>
+  <button class="pill" data-cmd="openHome">Home screen</button>
+  <button class="power" data-cmd="powerOff" data-confirm="Turn off the TV?" aria-label="Power off">
+    <svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.4 6.4a8 8 0 1 0 11.2 0"/></svg>
+  </button>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button type="button" data-tab="remote" class="active">Remote</button>
+  <button type="button" data-tab="assistant">Assistant</button>
+  <button type="button" data-tab="settings">Settings</button>
+</nav>
+
+<div id="tab-remote">
+<section>
+  <div class="apps" id="apps"></div>
+  <button class="wide" id="free" data-cmd="freeMemory">Free memory (close background apps)</button>
+  <a class="wide link" href="/play">Join a game on the TV</a>
+</section>
+
+<section>
+  <div class="seg">
+    <button type="button" data-mode="keys" class="active">Keys</button>
+    <button type="button" data-mode="pad">Touchpad</button>
+  </div>
+  <div class="pad" id="pad" hidden>Drag to move &middot; Tap to click &middot; Two fingers to scroll</div>
+  <div class="dpad" id="dpad">
+    <span></span>
+    <button data-cmd="button" data-arg="UP" data-repeat aria-label="Up"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
+    <span></span>
+    <button data-cmd="button" data-arg="LEFT" data-repeat aria-label="Left"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+    <button class="ok" data-cmd="button" data-arg="ENTER">OK</button>
+    <button data-cmd="button" data-arg="RIGHT" data-repeat aria-label="Right"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    <span></span>
+    <button data-cmd="button" data-arg="DOWN" data-repeat aria-label="Down"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+    <span></span>
+  </div>
+  <div class="krow c4">
+    <button data-cmd="button" data-arg="BACK">Back</button>
+    <button data-cmd="button" data-arg="HOME">Home</button>
+    <button data-cmd="button" data-arg="QMENU">Settings</button>
+    <button data-cmd="button" data-arg="EXIT">Exit</button>
+  </div>
+</section>
+
+<section class="rockers">
+  <div class="rocker">
+    <button data-cmd="volumeUp" data-repeat aria-label="Volume up"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    <label>VOL</label>
+    <button data-cmd="volumeDown" data-repeat aria-label="Volume down"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+  </div>
+  <button class="mute" id="mute" data-cmd="button" data-arg="MUTE">Mute</button>
+  <div class="rocker">
+    <button data-cmd="channelUp" data-repeat aria-label="Channel up"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
+    <label>CH</label>
+    <button data-cmd="channelDown" data-repeat aria-label="Channel down"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+  </div>
+</section>
+
+<section>
+  <div class="krow c4" style="margin-top:0">
+    <button data-cmd="button" data-arg="REWIND" aria-label="Rewind"><svg viewBox="0 0 24 24"><path d="M11 6l-7 6 7 6zM20 6l-7 6 7 6z"/></svg></button>
+    <button data-cmd="play" aria-label="Play"><svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg></button>
+    <button data-cmd="pause" aria-label="Pause"><svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg></button>
+    <button data-cmd="button" data-arg="FASTFORWARD" aria-label="Fast forward"><svg viewBox="0 0 24 24"><path d="M4 6l7 6-7 6zM13 6l7 6-7 6z"/></svg></button>
+  </div>
+</section>
+
+<section>
+  <form class="kbd" id="kbd" autocomplete="off">
+    <input id="typeText" type="text" placeholder="Type on TV (search, URL...)" enterkeyhint="send" maxlength="200">
+    <button type="submit">Send</button>
+  </form>
+  <div class="krow c3">
+    <button data-cmd="backspace" data-repeat>Delete</button>
+    <button data-cmd="enter">Enter</button>
+    <button data-cmd="button" data-arg="INFO">Info</button>
+  </div>
+</section>
+
+<section>
+  <details>
+    <summary>Numbers and color keys</summary>
+    <div class="krow c3" id="numpad"></div>
+    <div class="krow c4 colors">
+      <button data-cmd="button" data-arg="RED" style="background:#d93b3b" aria-label="Red"></button>
+      <button data-cmd="button" data-arg="GREEN" style="background:#2f9e5b" aria-label="Green"></button>
+      <button data-cmd="button" data-arg="YELLOW" style="background:#d6b52a" aria-label="Yellow"></button>
+      <button data-cmd="button" data-arg="BLUE" style="background:#3b6fd9" aria-label="Blue"></button>
+    </div>
+  </details>
+</section>
+</div>
+
+<div id="tab-assistant" hidden>
+<section>
+  <h2>Ask the TV</h2>
+  <div class="chat" id="chat"></div>
+  <div class="thinking" id="thinking" hidden>Working on it...</div>
+  <form class="ask" id="askForm" autocomplete="off">
+    <input id="askText" maxlength="500" placeholder="Open BBC One, what is on now?" enterkeyhint="send">
+    <button class="primary" type="submit">Send</button>
+  </form>
+  <p class="muted tip">To speak instead of typing, tap the microphone key on your phone's keyboard.</p>
+  <div class="examples" id="examples">
+    <button type="button">What is on BBC One now?</button>
+    <button type="button">Open the news channel</button>
+    <button type="button">Turn the volume down a little</button>
+    <button type="button">The TV is slow</button>
+  </div>
+  <p class="muted" id="askHint" hidden>Add your Anthropic API key under Claude settings to start.</p>
+</section>
+
+</div>
+
+<div id="tab-settings" hidden>
+<section>
+  <h2>Health <small class="muted" id="uptime"></small></h2>
+  <div class="stats">
+    <div class="stat" id="memStat"><b id="mem">-</b><span id="memTotal">MB memory free</span></div>
+    <div class="stat"><b id="cpu">-</b><span>CPU busy</span></div>
+    <div class="stat"><b id="disk">-</b><span id="diskTotal">MB storage free</span></div>
+  </div>
+  <svg class="chart" id="chart" viewBox="0 0 300 90" preserveAspectRatio="none"></svg>
+  <div class="legend"><span><i style="background:var(--accent)"></i>Free memory</span><span><i style="background:var(--warn)"></i>CPU</span><span>last hour</span></div>
+</section>
+
+<section>
+  <h2>Activity</h2>
+  <ul class="events" id="events"><li>No activity yet.</li></ul>
+</section>
+
+<section>
+  <h2>Schedules</h2>
+  <ul class="sched" id="schedules"></ul>
+  <p class="muted" id="noSchedules">No schedules yet.</p>
+  <form id="addForm" autocomplete="off">
+    <div class="row">
+      <div><label for="time">Time</label><input id="time" type="time" required value="09:00"></div>
+      <div>
+        <label for="action">Action</label>
+        <select id="action">
+          <option value="toast">Show a message</option>
+          <option value="freeMemory">Free memory</option>
+          <option value="volumeDown">Turn the volume down</option>
+          <option value="powerOff">Turn the TV off</option>
+        </select>
+      </div>
+    </div>
+    <div id="textField"><label for="text">Message</label><input id="text" maxlength="120" placeholder="Medicine time"></div>
+    <div id="stepsField" hidden><label for="steps">Steps down</label><input id="steps" type="number" min="1" max="30" value="5"></div>
+    <label>Days (none = every day)</label>
+    <div class="days" id="days"></div>
+    <div class="actions"><button class="primary" type="submit">Add schedule</button></div>
+  </form>
+</section>
+
+<section>
+  <h2>Settings</h2>
+  <form id="settingsForm">
+    <div class="switch">Close background apps when memory is low <input type="checkbox" id="autoCleanup"></div>
+    <div class="row">
+      <div><label for="lowMemoryMB">Low memory below (MB)</label><input id="lowMemoryMB" type="number" min="50" max="600"></div>
+      <div><label for="lowMemorySamples">For (minutes)</label><input id="lowMemorySamples" type="number" min="1" max="10"></div>
+    </div>
+    <label for="cleanupCooldownMin">At most every (minutes)</label><input id="cleanupCooldownMin" type="number" min="1" max="120">
+    <div class="switch">Warn on the TV when the CPU stays busy <input type="checkbox" id="cpuWarning"></div>
+    <div class="row">
+      <div><label for="highCpuPercent">CPU above (%)</label><input id="highCpuPercent" type="number" min="50" max="100"></div>
+      <div><label for="highCpuMinutes">For (minutes)</label><input id="highCpuMinutes" type="number" min="1" max="60"></div>
+    </div>
+    <label for="cpuWarnCooldownMin">At most every (minutes)</label><input id="cpuWarnCooldownMin" type="number" min="5" max="240">
+    <div class="actions"><button class="primary" type="submit">Save settings</button></div>
+  </form>
+</section>
+
+<section>
+  <h2>Claude</h2>
+  <p class="muted" id="keyState">No API key yet.</p>
+  <form id="keyForm" autocomplete="off">
+    <label for="apiKey">Anthropic API key</label>
+    <input id="apiKey" type="password" placeholder="sk-ant-..." autocomplete="off">
+    <div class="actions"><button class="primary" type="submit">Save key</button><button type="button" class="danger" id="keyDelete" hidden>Remove key</button></div>
+  </form>
+  <form id="aiForm">
+    <div class="row">
+      <div><label for="model">Model</label><select id="model"></select></div>
+      <div><label for="effort">Effort</label><select id="effort"></select></div>
+    </div>
+    <div class="row">
+      <div><label for="maxTokens">Max tokens</label><input id="maxTokens" type="number" min="1024" max="32000" step="1024"></div>
+      <div><label for="dailyLimit">Daily requests</label><input id="dailyLimit" type="number" min="1" max="1000"></div>
+    </div>
+    <label for="historyMinutes">Remember the conversation for (minutes)</label><input id="historyMinutes" type="number" min="0" max="60">
+    <div class="switch">Show answers on the TV <input type="checkbox" id="showOnTv"></div>
+    <div class="switch">Web search for news and weather (about $0.01 per search) <input type="checkbox" id="webSearch"></div>
+    <div class="actions"><button class="primary" type="submit">Save Claude settings</button></div>
+  </form>
+  <p class="muted" id="usage"></p>
+</section>
+
+</div>
+
+<div class="gate" id="gate">
+  <form class="box" id="gateForm">
+    <h1 id="gateTitle">Access code</h1>
+    <p class="muted" id="gateText">Enter the access code of this TV.</p>
+    <input id="gateCode" type="password" minlength="4" maxlength="32" required autocomplete="current-password">
+    <div class="actions"><button class="primary" type="submit">Continue</button></div>
+  </form>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const ACTIONS = { toast: "Message", freeMemory: "Free memory", volumeDown: "Volume down", powerOff: "Turn off" };
+  const SETTINGS = ["lowMemoryMB", "lowMemorySamples", "cleanupCooldownMin", "highCpuPercent", "highCpuMinutes", "cpuWarnCooldownMin"];
+  let code = "";
+  let toastTimer;
+
+  function toast(msg, ok) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.toggle("ok", !!ok);
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+  }
+
+  try { code = localStorage.getItem("assistantCode") || ""; } catch {}
+
+  async function api(path, body) {
+    const opts = { headers: { "X-Access-Code": code } };
+    if (body !== undefined) {
+      opts.method = "POST";
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    const r = await fetch(path, opts);
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 401) { showGate(true); throw new Error(data.error || "access code required"); }
+    if (!r.ok) throw new Error(data.error || "request failed");
+    return data;
+  }
+
+  function showGate(existing) {
+    $("gateTitle").textContent = existing ? "Access code" : "Create an access code";
+    $("gateText").textContent = existing
+      ? "Enter the access code of this TV."
+      : "Choose a code (4-32 characters). Anyone who opens this page needs it to use the remote or change settings.";
+    $("gate").classList.add("show");
+    $("gateCode").focus();
+  }
+
+  $("gateForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const value = $("gateCode").value;
+    try {
+      const s = await (await fetch("/api/status")).json();
+      if (!s.accessCodeSet) {
+        const r = await fetch("/api/access", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: value }) });
+        if (!r.ok) throw new Error((await r.json()).error);
+      }
+      code = value;
+      try { localStorage.setItem("assistantCode", code); } catch {}
+      await api("/api/health");
+      $("gate").classList.remove("show");
+      $("gateCode").value = "";
+      start();
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  function chart(history) {
+    const svg = $("chart");
+    if (history.length < 2) { svg.innerHTML = ""; return; }
+    const total = history[history.length - 1].totalMB || 1;
+    const x = (i) => (i / (history.length - 1)) * 300;
+    const line = (pick, max, color) => {
+      const pts = history.map((s, i) => s[pick] == null ? null : x(i).toFixed(1) + "," + (88 - (s[pick] / max) * 84).toFixed(1)).filter(Boolean);
+      return pts.length > 1 ? `<polyline fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" points="${pts.join(" ")}"/>` : "";
+    };
+    svg.innerHTML = line("availableMB", total, "var(--accent)") + line("cpu", 100, "var(--warn)");
+  }
+
+  function timeOf(t) {
+    return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function describe(s) {
+    if (s.action === "toast") return s.text;
+    if (s.action === "volumeDown") return "Volume down " + s.steps + " steps";
+    return ACTIONS[s.action];
+  }
+
+  async function loadHealth() {
+    try {
+      const h = await api("/api/health");
+      if (h.uptimeSeconds) $("uptime").textContent = "TV on for " + Math.round(h.uptimeSeconds / 60) + " min";
+      if (h.now) {
+        $("mem").textContent = h.now.availableMB;
+        $("memTotal").textContent = "MB memory free of " + h.now.totalMB;
+        $("cpu").textContent = h.now.cpu == null ? "-" : h.now.cpu + "%";
+        $("memStat").classList.toggle("low", h.now.availableMB < Number($("lowMemoryMB").value || 0));
+      }
+      if (h.disk) {
+        $("disk").textContent = h.disk.freeMB;
+        $("diskTotal").textContent = "MB storage free of " + h.disk.totalMB;
+      }
+      chart(h.history);
+      const ev = h.events.slice().reverse();
+      $("events").innerHTML = "";
+      if (!ev.length) $("events").innerHTML = "<li>No activity yet.</li>";
+      for (const e of ev.slice(0, 8)) {
+        const li = document.createElement("li");
+        const b = document.createElement("b");
+        b.textContent = timeOf(e.t) + " ";
+        li.append(b, e.text);
+        $("events").appendChild(li);
+      }
+    } catch (err) {
+      // The header shows the connection state; nothing else to do here.
+    }
+  }
+
+  async function loadSchedules() {
+    const data = await api("/api/schedules");
+    const list = $("schedules");
+    list.innerHTML = "";
+    $("noSchedules").hidden = data.schedules.length > 0;
+    for (const s of data.schedules) {
+      const li = document.createElement("li");
+      li.classList.toggle("off", !s.enabled);
+      const when = document.createElement("div");
+      when.className = "when";
+      when.textContent = s.time;
+      const what = document.createElement("div");
+      what.className = "what";
+      const title = document.createElement("div");
+      title.textContent = describe(s);
+      const days = document.createElement("small");
+      days.textContent = (s.days.length ? s.days.map((d) => DAYS[d - 1]).join(" ") : "Every day") + " · " + ACTIONS[s.action];
+      what.append(title, days);
+      const toggle = document.createElement("input");
+      toggle.type = "checkbox";
+      toggle.checked = s.enabled;
+      toggle.style.width = "22px";
+      toggle.style.minHeight = "0";
+      toggle.title = "Enabled";
+      toggle.onchange = () => api("/api/schedules/enable", { id: s.id, enabled: toggle.checked }).then(loadSchedules).catch((e) => toast(e.message));
+      const run = document.createElement("button");
+      run.className = "small";
+      run.textContent = "Run";
+      run.onclick = () => {
+        if (s.action === "powerOff" && !confirm("Turn the TV off now?")) return;
+        api("/api/schedules/run", { id: s.id }).then(() => toast("Done", true)).catch((e) => toast(e.message));
+      };
+      const del = document.createElement("button");
+      del.className = "small danger";
+      del.textContent = "Delete";
+      del.onclick = () => confirm("Delete this schedule?") && api("/api/schedules/delete", { id: s.id }).then(loadSchedules).catch((e) => toast(e.message));
+      li.append(when, what, toggle, run, del);
+      list.appendChild(li);
+    }
+  }
+
+  async function loadSettings() {
+    const settings = await api("/api/settings");
+    const health = settings.health;
+    renderClaude(settings);
+    for (const k of SETTINGS) $(k).value = health[k];
+    $("autoCleanup").checked = health.autoCleanup;
+    $("cpuWarning").checked = health.cpuWarning;
+  }
+
+  $("days").innerHTML = DAYS.map((d, i) => `<label><input type="checkbox" value="${i + 1}"><span>${d}</span></label>`).join("");
+  $("action").addEventListener("change", () => {
+    $("textField").hidden = $("action").value !== "toast";
+    $("stepsField").hidden = $("action").value !== "volumeDown";
+  });
+
+  $("addForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = {
+      time: $("time").value,
+      action: $("action").value,
+      text: $("text").value,
+      steps: Number($("steps").value),
+      days: [...$("days").querySelectorAll("input:checked")].map((i) => Number(i.value)),
+    };
+    try {
+      await api("/api/schedules", body);
+      toast("Schedule added", true);
+      $("text").value = "";
+      loadSchedules();
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  $("settingsForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const health = { autoCleanup: $("autoCleanup").checked, cpuWarning: $("cpuWarning").checked };
+    for (const k of SETTINGS) health[k] = Number($(k).value);
+    try {
+      await api("/api/settings", { health });
+      toast("Settings saved", true);
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  const TOOL_LABELS = {
+    tv_status: "checked the TV", find_channel: "searched channels", open_channel: "opened the channel",
+    channel_guide: "read the guide", list_apps: "listed apps", open_app: "opened the app",
+    volume: "changed the volume", show_message: "showed a message", free_memory: "freed memory",
+  };
+
+  function addMessage(kind, text, extra) {
+    const div = document.createElement("div");
+    div.className = "msg " + kind;
+    div.textContent = text;
+    if (extra && extra.actions && extra.actions.length) {
+      const chips = document.createElement("div");
+      chips.className = "chips";
+      for (const a of extra.actions) {
+        const c = document.createElement("span");
+        c.className = "chip" + (a.ok ? "" : " bad");
+        c.textContent = (TOOL_LABELS[a.tool] || a.tool) + (a.ok ? "" : " (failed)");
+        chips.appendChild(c);
+      }
+      div.appendChild(chips);
+    }
+    if (extra && extra.model) {
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      const label = (settingsCache.models || []).find((m) => m.id === extra.model);
+      meta.textContent = (label ? label.label : extra.model) + " · $" + extra.costUSD.toFixed(4);
+      div.appendChild(meta);
+    }
+    $("chat").appendChild(div);
+    div.scrollIntoView({ block: "nearest" });
+  }
+
+  async function ask(text) {
+    text = text.trim();
+    if (!text) return;
+    addMessage("me", text);
+    $("askText").value = "";
+    $("thinking").hidden = false;
+    try {
+      const out = await api("/api/ask", { text });
+      addMessage("bot", out.reply, out);
+      loadUsage();
+    } catch (err) {
+      addMessage("err", err.message);
+    } finally {
+      $("thinking").hidden = true;
+    }
+  }
+
+  $("askForm").addEventListener("submit", (e) => { e.preventDefault(); ask($("askText").value); });
+  for (const b of $("examples").querySelectorAll("button")) b.addEventListener("click", () => ask(b.textContent));
+
+  let settingsCache = {};
+
+  function renderClaude(s) {
+    settingsCache = s;
+    $("keyState").textContent = s.apiKey.set ? "API key saved (ends with " + s.apiKey.last4 + ")." : "No API key yet.";
+    $("keyDelete").hidden = !s.apiKey.set;
+    $("askHint").hidden = s.apiKey.set;
+    $("model").innerHTML = "";
+    for (const m of s.models) $("model").add(new Option(m.label, m.id, false, m.id === s.ai.model));
+    $("effort").innerHTML = "";
+    for (const e of s.efforts) $("effort").add(new Option(e === "default" ? "Model default" : e, e, false, e === s.ai.effort));
+    $("maxTokens").value = s.ai.maxTokens;
+    $("dailyLimit").value = s.ai.dailyLimit;
+    $("historyMinutes").value = s.ai.historyMinutes;
+    $("showOnTv").checked = s.ai.showOnTv;
+    $("webSearch").checked = s.ai.webSearch;
+  }
+
+  async function loadUsage() {
+    try {
+      const u = await api("/api/usage");
+      $("usage").textContent = "Today: " + u.usage.requests + " of " + u.dailyLimit + " requests, " + u.usage.webSearches +
+        (u.usage.webSearches === 1 ? " web search" : " web searches") + ", about $" + u.usage.costUSD.toFixed(4) + ".";
+    } catch (err) {
+      $("usage").textContent = "";
+    }
+  }
+
+  $("keyForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      renderClaude(await api("/api/apikey", { key: $("apiKey").value }));
+      $("apiKey").value = "";
+      toast("API key saved", true);
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  $("keyDelete").addEventListener("click", async () => {
+    if (!confirm("Remove the API key from the TV?")) return;
+    try {
+      renderClaude(await api("/api/apikey/delete", {}));
+      toast("API key removed", true);
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  $("aiForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const ai = {
+      model: $("model").value, effort: $("effort").value, maxTokens: Number($("maxTokens").value),
+      dailyLimit: Number($("dailyLimit").value), historyMinutes: Number($("historyMinutes").value), showOnTv: $("showOnTv").checked,
+      webSearch: $("webSearch").checked,
+    };
+    try {
+      renderClaude(await api("/api/settings", { ai }));
+      toast("Claude settings saved", true);
+      loadUsage();
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  async function loadAll() {
+    try {
+      await loadSettings();
+      await Promise.all([loadHealth(), loadSchedules(), loadUsage()]);
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
+
+  // Remote tab
+
+  function send(cmd, arg) {
+    if (navigator.vibrate) navigator.vibrate(8);
+    return post(cmd, arg);
+  }
+
+  async function post(cmd, arg) {
+    try {
+      const out = await api("/api/cmd", { cmd, arg });
+      return out.result;
+    } catch (err) {
+      toast(err.message === "Failed to fetch" ? "The TV is not reachable" : err.message);
+      return null;
+    }
+  }
+
+  // Number pad
+  for (const n of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "LIST", "0", "GUIDE"]) {
+    const b = document.createElement("button");
+    b.dataset.cmd = "button";
+    b.dataset.arg = n;
+    b.textContent = n === "LIST" ? "List" : n === "GUIDE" ? "Guide" : n;
+    $("numpad").appendChild(b);
+  }
+
+  // Tap, or hold to repeat for keys marked data-repeat.
+  let holdTimer, repeatTimer, held;
+  function stopHold() {
+    clearTimeout(holdTimer);
+    clearInterval(repeatTimer);
+    if (held) held.classList.remove("pressed");
+    held = null;
+  }
+  document.addEventListener("pointerdown", (e) => {
+    const b = e.target.closest("[data-cmd]");
+    if (!b || !("repeat" in b.dataset)) return;
+    e.preventDefault();
+    stopHold();
+    held = b;
+    b.classList.add("pressed");
+    b.addEventListener("pointerleave", stopHold, { once: true });
+    send(b.dataset.cmd, b.dataset.arg);
+    holdTimer = setTimeout(() => {
+      repeatTimer = setInterval(() => send(b.dataset.cmd, b.dataset.arg), 160);
+    }, 450);
+  });
+  for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, stopHold, true);
+  window.addEventListener("blur", stopHold);
+  // Hold an app tile for about a second to remove it (only apps the server marks removable).
+  let pressTimer, longPressed = false;
+  document.addEventListener("pointerdown", (e) => {
+    const b = e.target.closest(".app[data-removable]");
+    longPressed = false;
+    clearTimeout(pressTimer);
+    if (!b) return;
+    pressTimer = setTimeout(() => {
+      longPressed = true;
+      removeApp(b);
+    }, 900);
+  });
+  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) {
+    document.addEventListener(ev, () => clearTimeout(pressTimer), true);
+  }
+  // A scroll of the app row must not count as a long press.
+  document.addEventListener("scroll", () => clearTimeout(pressTimer), true);
+
+  async function removeApp(b) {
+    const title = b.querySelector("span").textContent;
+    if (!confirm("Remove " + title + " from the TV?")) return;
+    const result = await send("uninstall", b.dataset.arg);
+    if (result) {
+      toast(title + " removed", true);
+      appsKey = "";
+      refresh();
+    }
+  }
+
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-cmd]");
+    if (!b || "repeat" in b.dataset) return;
+    if (longPressed) {
+      longPressed = false;
+      return;
+    }
+    if (b.dataset.confirm && !confirm(b.dataset.confirm)) return;
+    if (b.id === "free") {
+      freeMemory(b);
+      return;
+    }
+    send(b.dataset.cmd, b.dataset.arg);
+    if (b.classList.contains("app")) setTimeout(refresh, 1500);
+  });
+  // A long press on a remote key must not open the phone's menu; text fields keep it.
+  $("tab-remote").addEventListener("contextmenu", (e) => { if (!e.target.closest("input")) e.preventDefault(); });
+
+  $("kbd").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = $("typeText").value;
+    if (!v) return;
+    $("typeText").value = "";
+    // Without feedback the field just empties; confirm that the TV got the text.
+    send("text", v).then((r) => { if (r) toast("Sent to the TV", true); });
+  });
+
+  // Keys / touchpad mode switch, remembered per phone.
+  function setMode(mode) {
+    for (const b of document.querySelectorAll(".seg button")) b.classList.toggle("active", b.dataset.mode === mode);
+    $("dpad").hidden = mode !== "keys";
+    $("pad").hidden = mode !== "pad";
+    try { localStorage.setItem("mode", mode); } catch {}
+  }
+  for (const b of document.querySelectorAll(".seg button")) b.addEventListener("click", () => setMode(b.dataset.mode));
+
+  // Touchpad: one finger moves the cursor, a short tap clicks, two fingers scroll.
+  // Deltas are summed and sent one request at a time, so a slow network never queues up moves.
+  const SPEED = 1.6;
+  const pad = $("pad");
+  const touches = new Map();
+  const pending = { move: { dx: 0, dy: 0 }, scroll: { dx: 0, dy: 0 } };
+  let sending = false, tapStart = null, travel = 0;
+
+  async function flushPointer() {
+    if (sending) return;
+    for (const kind of ["move", "scroll"]) {
+      const p = pending[kind];
+      const dx = Math.trunc(p.dx), dy = Math.trunc(p.dy);
+      if (!dx && !dy) continue;
+      p.dx -= dx;
+      p.dy -= dy;
+      sending = true;
+      await post(kind, { dx, dy });
+      sending = false;
+      return flushPointer();
+    }
+  }
+
+  pad.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    pad.setPointerCapture(e.pointerId);
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    pad.classList.add("active");
+    if (touches.size === 1) {
+      tapStart = performance.now();
+      travel = 0;
+    } else {
+      tapStart = null;
+    }
+  });
+  pad.addEventListener("pointermove", (e) => {
+    const t = touches.get(e.pointerId);
+    if (!t) return;
+    const dx = e.clientX - t.x, dy = e.clientY - t.y;
+    t.x = e.clientX;
+    t.y = e.clientY;
+    travel += Math.abs(dx) + Math.abs(dy);
+    if (touches.size >= 2) {
+      pending.scroll.dx += dx / touches.size;
+      pending.scroll.dy += dy / touches.size;
+    } else {
+      pending.move.dx += dx * SPEED;
+      pending.move.dy += dy * SPEED;
+    }
+    flushPointer();
+  });
+  function endTouch(e) {
+    if (!touches.delete(e.pointerId)) return;
+    if (touches.size) return;
+    pad.classList.remove("active");
+    if (tapStart !== null && travel < 10 && performance.now() - tapStart < 300) send("click");
+    tapStart = null;
+  }
+  pad.addEventListener("pointerup", endTouch);
+  pad.addEventListener("pointercancel", endTouch);
+
+  async function freeMemory(b) {
+    b.disabled = true;
+    const label = b.textContent;
+    b.textContent = "Closing background apps...";
+    const result = await send("freeMemory");
+    b.disabled = false;
+    b.textContent = label;
+    if (result) {
+      toast(result.closed.length ? "Closed: " + result.closed.join(", ") : "Nothing was running in the background", true);
+    }
+  }
+
+  let appsKey = "";
+  function renderApps(apps, currentId) {
+    const key = apps.map((a) => a.id).join(",");
+    if (key !== appsKey) {
+      appsKey = key;
+      const box = $("apps");
+      box.replaceChildren();
+      for (const a of apps) {
+        const b = document.createElement("button");
+        b.className = "app";
+        b.dataset.cmd = "launch";
+        b.dataset.arg = a.id;
+        if (a.canRemove) b.dataset.removable = "";
+        if (a.icon) {
+          const img = document.createElement("img");
+          img.src = a.icon;
+          img.alt = "";
+          img.loading = "lazy";
+          img.onerror = () => img.remove();
+          b.appendChild(img);
+        }
+        const s = document.createElement("span");
+        s.textContent = a.title;
+        b.appendChild(s);
+        box.appendChild(b);
+      }
+    }
+    for (const b of $("apps").children) b.classList.toggle("current", b.dataset.arg === currentId);
+  }
+
+  // The header (app on screen, volume) and the app row.
+  async function refresh() {
+    try {
+      const s = await api("/api/state");
+      $("dot").classList.toggle("on", s.connected);
+      $("now").textContent = s.connected ? (s.foreground ? s.foreground.title : "TV") : "TV not connected";
+      if (s.volume && s.volume.level != null) {
+        $("vol").textContent = "Volume " + s.volume.level + (s.volume.muted ? " (muted)" : "");
+        $("mute").classList.toggle("on", !!s.volume.muted);
+      } else {
+        $("vol").textContent = s.error || "";
+      }
+      if (s.apps.length) renderApps(s.apps, s.foreground && s.foreground.id);
+    } catch {
+      $("dot").classList.remove("on");
+      $("now").textContent = "TV not reachable";
+    }
+  }
+
+  // Tabs. "#remote", "#assistant", "#settings" or "#touchpad" in the address opens one
+  // directly (handy as a bookmark); otherwise the last tab is remembered per phone.
+  const TABS = ["remote", "assistant", "settings"];
+  function showTab(name) {
+    for (const t of TABS) $("tab-" + t).hidden = t !== name;
+    for (const b of $("tabs").children) b.classList.toggle("active", b.dataset.tab === name);
+    try { localStorage.setItem("tab", name); } catch {}
+    window.scrollTo(0, 0);
+  }
+  for (const b of $("tabs").children) b.addEventListener("click", () => showTab(b.dataset.tab));
+  {
+    const hash = location.hash.slice(1);
+    let saved = "";
+    try { saved = localStorage.getItem("tab") || ""; } catch {}
+    if (hash === "touchpad") {
+      showTab("remote");
+      setMode("pad");
+    } else {
+      showTab(TABS.includes(hash) ? hash : TABS.includes(saved) ? saved : "remote");
+      try { if (localStorage.getItem("mode") === "pad") setMode("pad"); } catch {}
+    }
+  }
+
+  let started = false;
+  function start() {
+    loadAll();
+    refresh();
+    if (started) return;
+    started = true;
+    const ready = () => !document.hidden && !$("gate").classList.contains("show");
+    setInterval(() => { if (ready()) refresh(); }, 4000);
+    setInterval(() => { if (ready()) loadHealth(); }, 30000);
+    document.addEventListener("visibilitychange", () => { if (ready()) refresh(); });
+  }
+
+  (async () => {
+    try {
+      const s = await (await fetch("/api/status")).json();
+      if (!s.accessCodeSet) return showGate(false);
+      if (!code && !s.authorized) return showGate(true);
+      start();
+    } catch {
+      $("dot").classList.remove("on");
+      $("now").textContent = "TV not reachable";
+    }
+  })();
+</script>
+</body>
+</html>
