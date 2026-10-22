@@ -307,10 +307,15 @@
   }
 
   function goHome() {
+    if (leaving) return;
     leaving = true;
     send({ t: "close" });
     setTimeout(function () { location.href = "index.html"; }, 300);
   }
+
+  // The phone's "Home screen" button launches this app again while it shows Games: the
+  // TV only brings the app to the front and sends this event, so go to the Home Screen.
+  document.addEventListener("webOSRelaunch", goHome, false);
 
   document.addEventListener("keydown", function (e) {
     var k = e.keyCode;
