@@ -13,7 +13,7 @@ process.env.HUB_DATA = fs.mkdtempSync(path.join(os.tmpdir(), "hub-test-"));
 process.on("exit", function () { fs.rmSync(process.env.HUB_DATA, { recursive: true, force: true }); });
 var realLog = console.log;
 console.log = function () {}; // the server logs every request
-require("../services/home/server.js").start([PORT], { uninstall: function (id, cb) { cb(null); } });
+var servers = require("../services/home/server.js").start([PORT], { uninstall: function (id, cb) { cb(null); } });
 
 // The TV Games screen: long-polls like apps/home/games.html.
 function fakeTv() {
@@ -21,7 +21,8 @@ function fakeTv() {
   function req(method, p, body, cb) {
     var data = body ? JSON.stringify(body) : null;
     var r = http.request({ host: "127.0.0.1", port: PORT, method: method, path: p,
-      headers: data ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) } : {} }, function (res) {
+      headers: data ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data), "X-Hub-Token": servers.tvToken }
+        : { "X-Hub-Token": servers.tvToken } }, function (res) {
       var c = [];
       res.on("data", function (x) { c.push(x); });
       res.on("end", function () { try { cb(JSON.parse(Buffer.concat(c).toString())); } catch (e) { cb(null); } });

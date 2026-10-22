@@ -122,9 +122,18 @@ WebSocket.prototype.close = function () {
   if (this._onClose) this._onClose();
 };
 
+// The TV must answer the WebSocket handshake within HANDSHAKE_MS and accept the
+// registration within REGISTER_MS (it can show an "Allow?" prompt first); otherwise the
+// connection is dropped and waiting requests fail instead of waiting forever.
+var HANDSHAKE_MS = 10000;
+var REGISTER_MS = 90000;
+var MAX_WAITING = 200;
+
 // Keeps one SSAP connection; requests made while disconnected wait for the reconnect.
-function TVClient(host, keyPath) {
+// port: 3000 on the TV; the tests use another.
+function TVClient(host, keyPath, port) {
   this.host = host;
+  this.port = port || 3000;
   this.keyPath = keyPath;
   this.ws = null;
   this.ready = false;
@@ -134,6 +143,7 @@ function TVClient(host, keyPath) {
   this.pointer = null;
   this.pointerReady = false;
   this.pointerQueue = [];
+  this.closeReason = "";
 }
 
 TVClient.prototype._connect = function () {
@@ -145,7 +155,17 @@ TVClient.prototype._connect = function () {
   } catch (e) {
     console.log("no pairing key yet: " + e.message);
   }
-  var ws = new WebSocket("ws://" + this.host + ":3000/", function () {
+  this.closeReason = "";
+  var giveUp = setTimeout(function () {
+    self.closeReason = "the TV did not answer";
+    ws.close();
+  }, HANDSHAKE_MS);
+  var ws = new WebSocket("ws://" + this.host + ":" + this.port + "/", function () {
+    clearTimeout(giveUp);
+    giveUp = setTimeout(function () {
+      self.closeReason = "the TV did not accept the connection (answer the prompt on the TV)";
+      ws.close();
+    }, REGISTER_MS);
     var payload = {
       forcePairing: false,
       pairingType: "PROMPT",
@@ -163,10 +183,12 @@ TVClient.prototype._connect = function () {
     }
     if (msg.id === "register") {
       if (msg.type === "registered") {
+        clearTimeout(giveUp);
         var newKey = msg.payload && msg.payload["client-key"];
         if (newKey && newKey !== key) {
           try {
             fs.writeFileSync(self.keyPath, newKey);
+            fs.chmodSync(self.keyPath, 384); // 0600: the key controls the TV
           } catch (e) {
             console.log("could not save pairing key: " + e.message);
           }
@@ -177,6 +199,7 @@ TVClient.prototype._connect = function () {
         for (var i = 0; i < waiting.length; i++) waiting[i]();
       } else if (msg.type === "error") {
         console.log("pairing failed: " + msg.error);
+        self.closeReason = "pairing refused: " + (msg.error || "no reason given");
         ws.close();
       }
       return;
@@ -187,6 +210,7 @@ TVClient.prototype._connect = function () {
     if (msg.type === "error") cb(new Error(msg.error || "unknown error"));
     else cb(null, msg.payload || {});
   }, function () {
+    clearTimeout(giveUp);
     if (self.ws !== ws) return;
     self.ws = null;
     self.ready = false;
@@ -196,31 +220,36 @@ TVClient.prototype._connect = function () {
     for (var id in pending) if (pending.hasOwnProperty(id)) pending[id](new Error("connection lost"));
     var waiting = self.waiting;
     self.waiting = [];
-    for (var i = 0; i < waiting.length; i++) waiting[i](new Error("TV unreachable"));
+    var reason = self.closeReason || "TV unreachable";
+    for (var i = 0; i < waiting.length; i++) waiting[i](new Error(reason));
   });
   this.ws = ws;
 };
 
 TVClient.prototype._whenReady = function (fn) {
   if (this.ready) return fn();
+  if (this.waiting.length >= MAX_WAITING) return fn(new Error("too many requests waiting for the TV"));
   this.waiting.push(fn);
   this._connect();
 };
 
+// The timeout counts from the call, also while the connection is still being made.
 TVClient.prototype.request = function (uri, payload, cb, timeoutMs) {
   var self = this;
+  var done = false, id = null;
+  function finish(err, result) {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    if (id) delete self.pending[id];
+    cb(err, result);
+  }
+  var timer = setTimeout(function () { finish(new Error("timeout: " + uri)); }, timeoutMs || 10000);
   this._whenReady(function (err) {
-    if (err) return cb(err);
-    var id = "r" + self.nextId++;
-    var timer = setTimeout(function () {
-      if (!self.pending[id]) return;
-      delete self.pending[id];
-      cb(new Error("timeout: " + uri));
-    }, timeoutMs || 10000);
-    self.pending[id] = function (e, result) {
-      clearTimeout(timer);
-      cb(e, result);
-    };
+    if (done) return;
+    if (err) return finish(err);
+    id = "r" + self.nextId++;
+    self.pending[id] = finish;
     var msg = { type: "request", id: id, uri: uri };
     if (payload) msg.payload = payload;
     self.ws.send(JSON.stringify(msg));
@@ -238,9 +267,12 @@ TVClient.prototype.closeApp = function (appId, cb) {
 };
 
 TVClient.prototype._dropPointer = function () {
-  if (this.pointer) this.pointer.close();
+  // While the socket path is requested, this.pointer is a placeholder without close().
+  var wasReady = this.pointerReady;
+  if (this.pointer && this.pointer.close) this.pointer.close();
   this.pointer = null;
   this.pointerReady = false;
+  if (!wasReady) this._flushPointer(new Error("connection lost")); // keys waiting for the socket
 };
 
 TVClient.prototype._pointerSend = function (text, cb) {
@@ -251,8 +283,10 @@ TVClient.prototype._pointerSend = function (text, cb) {
   }
   this.pointerQueue.push({ text: text, cb: cb });
   if (this.pointer) return;
-  this.pointer = {}; // placeholder while the socket path is requested
+  var placeholder = this.pointer = {}; // placeholder while the socket path is requested
   this.request("ssap://com.webos.service.networkinput/getPointerInputSocket", null, function (err, res) {
+    if (self.pointer !== placeholder) return; // the connection dropped in the meantime
+    if (!err && !/^wss?:\/\//.test(String(res && res.socketPath))) err = new Error("no pointer socket from the TV");
     if (err) {
       self.pointer = null;
       return self._flushPointer(err);

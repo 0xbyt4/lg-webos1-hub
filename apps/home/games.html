@@ -87,15 +87,13 @@
 
 <div class="notice" id="notice"></div>
 
+<script src="hub.js"></script>
 <script>
   window.TVGAMES = {};
   // The TV has no developer console: send script errors to the hub log.
   window.onerror = function (msg, src, line) {
     try {
-      var x = new XMLHttpRequest();
-      x.open("POST", "http://127.0.0.1:8765/api/log", true);
-      x.setRequestHeader("Content-Type", "application/json");
-      x.send(JSON.stringify({ message: "games: " + msg + " @" + String(src).split("/").pop() + ":" + line }));
+      Hub.request("POST", "/api/log", { message: "games: " + msg + " @" + String(src).split("/").pop() + ":" + line }, function () {});
     } catch (e) {}
   };
 </script>
@@ -108,7 +106,6 @@
 <script src="games/snake.js"></script>
 <script>
 (function () {
-  var API = "http://127.0.0.1:8765";
   var KEY = { LEFT: 37, UP: 38, RIGHT: 39, DOWN: 40, OK: 13, BACK: 461 };
 
   function $(id) { return document.getElementById(id); }
@@ -164,17 +161,7 @@
   };
 
   function request(method, path, body, done) {
-    var x = new XMLHttpRequest();
-    x.open(method, API + path, true);
-    x.timeout = 30000;
-    if (body) x.setRequestHeader("Content-Type", "application/json");
-    x.onreadystatechange = function () {
-      if (x.readyState !== 4) return;
-      var data = null;
-      try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
-      done(x.status, data);
-    };
-    x.send(body ? JSON.stringify(body) : null);
+    Hub.request(method, path, body, done);
   }
 
   function send(obj) {

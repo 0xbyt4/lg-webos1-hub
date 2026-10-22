@@ -370,6 +370,7 @@
   <form class="box" id="gateForm">
     <h1 id="gateTitle">Access code</h1>
     <p class="muted" id="gateText">Enter the access code of this TV.</p>
+    <input id="gatePin" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="Setup PIN from the TV" autocomplete="off" hidden>
     <input id="gateCode" type="password" minlength="4" maxlength="32" required autocomplete="current-password">
     <div class="actions"><button class="primary" type="submit">Continue</button></div>
   </form>
@@ -414,9 +415,13 @@
     $("gateTitle").textContent = existing ? "Access code" : "Create an access code";
     $("gateText").textContent = existing
       ? "Enter the access code of this TV."
-      : "Choose a code (4-32 characters). Anyone who opens this page needs it to use the remote or change settings.";
+      : "Type the setup PIN that the TV's Home Screen shows, then choose a code (6-32 characters). Anyone who opens this page needs the code to use the remote or change settings.";
+    $("gatePin").hidden = existing;
+    $("gatePin").required = !existing;
+    $("gateCode").minLength = existing ? 4 : 6;
+    $("gateCode").placeholder = existing ? "" : "New access code";
     $("gate").classList.add("show");
-    $("gateCode").focus();
+    (existing ? $("gateCode") : $("gatePin")).focus();
   }
 
   $("gateForm").addEventListener("submit", async (e) => {
@@ -425,7 +430,8 @@
     try {
       const s = await (await fetch("/api/status")).json();
       if (!s.accessCodeSet) {
-        const r = await fetch("/api/access", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: value }) });
+        const r = await fetch("/api/access", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: value, pin: $("gatePin").value }) });
         if (!r.ok) throw new Error((await r.json()).error);
       }
       code = value;
@@ -433,6 +439,7 @@
       await api("/api/health");
       $("gate").classList.remove("show");
       $("gateCode").value = "";
+      $("gatePin").value = "";
       start();
     } catch (err) {
       toast(err.message);

@@ -8,6 +8,7 @@ var MAX_MESSAGE = 4096; // games send small JSON messages
 var MAX_FRAGMENTS = 16; // a message in more pieces than this is not from a real browser
 var MAX_BUFFERED = 64 * 1024; // a client that stops reading is dropped, not buffered for
 var MAX_CONNECTIONS = 32;
+var MAX_PER_ADDRESS = 6; // one device cannot take every connection
 
 // Set by server.js: one short log line per connection event (the TV has no other trace).
 var log = function () {};
@@ -135,13 +136,22 @@ Connection.prototype.close = function (code) {
 };
 
 // Accept WebSocket upgrades on `path` of an http.Server. onConnection(conn, req).
+// allowed(req), optional: false refuses the upgrade (wrong Host or Origin).
 // The connection count is shared by all servers, so one page cannot use up the hub.
 var open = 0;
-function attach(server, path, onConnection) {
+var perAddress = {};
+function attach(server, path, onConnection, allowed) {
   server.on("upgrade", function (req, socket, head) {
-    log("ws handshake from " + req.connection.remoteAddress + " " + req.url + " v" + req.headers["sec-websocket-version"]);
-    if (open >= MAX_CONNECTIONS) {
-      log("ws refused: too many connections (" + open + ")");
+    var address = req.connection.remoteAddress;
+    log("ws handshake from " + address + " " + req.url + " v" + req.headers["sec-websocket-version"]);
+    if (allowed && !allowed(req)) {
+      log("ws refused: host " + req.headers.host + ", origin " + req.headers.origin);
+      socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    if (open >= MAX_CONNECTIONS || (perAddress[address] || 0) >= MAX_PER_ADDRESS) {
+      log("ws refused: too many connections (" + open + ", " + (perAddress[address] || 0) + " from " + address + ")");
       socket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
@@ -160,10 +170,13 @@ function attach(server, path, onConnection) {
       "Sec-WebSocket-Accept: " + accept + "\r\n\r\n");
     var conn = new Connection(socket, req);
     open++;
+    perAddress[address] = (perAddress[address] || 0) + 1;
     var counted = true;
     socket.on("close", function () {
-      if (counted) open--;
+      if (!counted) return;
       counted = false;
+      open--;
+      if (--perAddress[address] <= 0) delete perAddress[address];
     });
     onConnection(conn, req);
     // Frames that arrived together with the handshake.

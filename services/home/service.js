@@ -49,10 +49,21 @@ process.on("uncaughtException", function (e) {
   server.log("uncaught: " + (e && e.stack ? e.stack : e));
 });
 
+// "start" also gives the caller the token that marks its HTTP requests as the Home
+// Screen's (server.js). Only apps and services on the TV can call it.
 service.register("start", function (message) {
   if (!running) {
     running = server.start(PORTS, { uninstall: uninstall });
     startedAt = Date.now();
   }
-  message.respond({ returnValue: true, ports: PORTS, pid: process.pid, upSeconds: Math.round((Date.now() - startedAt) / 1000) });
+  message.respond({ returnValue: true, ports: PORTS, pid: process.pid, token: running.tvToken,
+    upSeconds: Math.round((Date.now() - startedAt) / 1000) });
+});
+
+// "quit" stops the service, so the next "start" runs the newly installed code
+// (scripts/deploy.sh calls it before installing).
+service.register("quit", function (message) {
+  server.log("quit requested");
+  message.respond({ returnValue: true });
+  setTimeout(function () { process.exit(0); }, 200);
 });

@@ -48,17 +48,17 @@ The **hub service** is the center. It turns simple commands from the phone into 
 
 ## HTTP API
 
-The phone page and the Home Screen use the same API. From another device every `/api` call needs the header `X-Access-Code`; calls from the TV itself (127.0.0.1 or its own network address) do not. Ten wrong codes in ten minutes lock other devices out for ten minutes; the TV itself is never locked out.
+The phone page and the Home Screen use the same API. Every `/api` call needs the header `X-Access-Code`, except calls from the Home Screen app, which send its token in `X-Hub-Token` (see above). Ten wrong codes or PINs from one address in ten minutes lock that address out for ten minutes. The server answers only requests whose `Host` is one of the TV's own addresses or `localhost`, and accepts only `Content-Type: application/json` in POST requests.
 
 | Method | Path | Body or query | Result |
 | --- | --- | --- | --- |
 | GET | `/` | | Phone page |
 | GET | `/api/status` | | `accessCodeSet`, `authorized` (no code needed) |
-| POST | `/api/access` | `{"code": "..."}` | Sets the first code; changing it needs the current one |
+| POST | `/api/access` | `{"code": "...", "pin": "..."}` | Sets the first code (6-32 characters) with the setup PIN from the Home Screen; changing it needs the current code |
 | GET | `/api/icon` | `?id=<appId>` | App icon (PNG) from the TV (no code needed: an image cannot send the header) |
 | GET | `/api/state` | | Connection, app list, app on screen, volume |
 | POST | `/api/cmd` | `{"cmd": "...", "arg": ...}` | Runs one remote command |
-| GET | `/api/health` | | Memory, CPU, storage, last hour, activity, next tasks, page address |
+| GET | `/api/health` | | Memory, CPU, storage, last hour, activity, next tasks, page address; for the Home Screen also the setup PIN until a code exists |
 | GET, POST | `/api/settings` | `{"health": {...}, "ai": {...}}` | Health and Claude settings |
 | GET, POST | `/api/schedules` | `{"time", "days", "action", "text", "steps"}` | List or add timed tasks |
 | POST | `/api/schedules/enable`, `/run`, `/delete` | `{"id", ...}` | Turn a task on or off, run it now, delete it |
@@ -161,9 +161,11 @@ Now the HTTP server keeps running after the Home Screen app closes. It stops onl
 
 The app runs from a `file://` page inside the TV's web app manager.
 
-1. On load, it calls the service's `start` method through `PalmServiceBridge`, the luna bridge that every webOS web app has.
-2. It then calls the server at `http://127.0.0.1:8765`. The server sends `Access-Control-Allow-Origin: *`, and the app has `allowCrossDomain` in its `appinfo.json`.
-3. While the service starts after a TV restart, the page retries for about 20 seconds.
+1. On load, it calls the service's `start` method through `PalmServiceBridge`, the luna bridge that every webOS web app has (`apps/home/hub.js`). The answer has a token that the service makes when it starts.
+2. It then calls the server at `http://127.0.0.1:8765` with the token in the `X-Hub-Token` header. Web pages cannot call the luna bridge, so a page in the TV's browser, which also connects from 127.0.0.1, has no token and needs the access code like any phone.
+3. The page is a `file://` page (Origin `null`). The server allows CORS only for that origin, and the app has `allowCrossDomain` in its `appinfo.json`.
+4. A restarted service has a new token. A request that gets 401 or 403 asks for the token again and is sent once more.
+5. While the service starts after a TV restart, the page retries for about 20 seconds.
 
 ## How an answer reaches the TV screen
 

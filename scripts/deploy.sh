@@ -8,6 +8,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STAGE="$ROOT/.devmode/stage-hub"
+# Check everything before the running hub is stopped below.
+: "${TV_IP:?set TV_IP to the TV address, e.g. TV_IP=192.168.1.50}"
+[ -f "$ROOT/.tv_key" ] || { echo "No .tv_key: run node tools/pair.js $TV_IP (docs/01-find-and-pair.md)" >&2; exit 1; }
+[ -f "$ROOT/.devmode/ssh_config" ] && [ -x "$ROOT/.devmode/tools/node_modules/.bin/ares-package" ] || {
+  echo "Developer Mode is not set up here: run TV_IP=$TV_IP scripts/setup-devmode.sh (docs/02-developer-mode.md)" >&2; exit 1; }
 mkdir -p "$STAGE/app" "$STAGE/service/static"
 
 rsync -a --delete "$ROOT/apps/home/" "$STAGE/app/"

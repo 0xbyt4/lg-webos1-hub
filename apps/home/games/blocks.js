@@ -2,21 +2,23 @@
 // Solo: one well with the next piece and the best scores. Together: up to 4 wells side
 // by side, all with the same piece order (one seed from the hub); clearing 2 or more
 // lines at once sends rows of junk to the others; the last one standing wins.
+// Its own look and rules: a 12-wide well, this project's colors, no landing preview, and
+// points that grow with the square of the lines cleared at once.
 // Light on the TV: no animation loop that draws every frame. A 40 ms timer checks when a
 // piece must fall, and only cells that changed get a new color.
 (function () {
   var K = window.TVKit;
-  var COLS = 10, ROWS = 20;
+  var COLS = 12, ROWS = 20;
   var EMPTY = "#1c1f24", JUNK = "#4a4d53";
-  var LINE_POINTS = [0, 100, 300, 500, 800];
+  var LINE_POINTS = [0, 60, 240, 540, 960]; // 60 x lines x lines, times the level
   var PIECES = {
-    I: { color: "#2fc4c4", size: 4, cells: [[0, 1], [1, 1], [2, 1], [3, 1]] },
-    O: { color: "#f2b24c", size: 4, cells: [[1, 0], [2, 0], [1, 1], [2, 1]] },
-    T: { color: "#b07cf2", size: 3, cells: [[1, 0], [0, 1], [1, 1], [2, 1]] },
-    S: { color: "#3fb27f", size: 3, cells: [[1, 0], [2, 0], [0, 1], [1, 1]] },
-    Z: { color: "#e5484d", size: 3, cells: [[0, 0], [1, 0], [1, 1], [2, 1]] },
-    J: { color: "#4f8cff", size: 3, cells: [[0, 0], [0, 1], [1, 1], [2, 1]] },
-    L: { color: "#f27c3c", size: 3, cells: [[2, 0], [0, 1], [1, 1], [2, 1]] }
+    I: { color: "#ff7a59", size: 4, cells: [[0, 1], [1, 1], [2, 1], [3, 1]] },
+    O: { color: "#2ec4b6", size: 4, cells: [[1, 0], [2, 0], [1, 1], [2, 1]] },
+    T: { color: "#a3d65c", size: 3, cells: [[1, 0], [0, 1], [1, 1], [2, 1]] },
+    S: { color: "#ff6fae", size: 3, cells: [[1, 0], [2, 0], [0, 1], [1, 1]] },
+    Z: { color: "#4cc9f0", size: 3, cells: [[0, 0], [1, 0], [1, 1], [2, 1]] },
+    J: { color: "#f9c74f", size: 3, cells: [[0, 0], [0, 1], [1, 1], [2, 1]] },
+    L: { color: "#b388ff", size: 3, cells: [[2, 0], [0, 1], [1, 1], [2, 1]] }
   };
   var ORDER = ["I", "O", "T", "S", "Z", "J", "L"];
   var CSS = [
@@ -146,12 +148,6 @@
     for (y = 0; y < ROWS; y++) for (x = 0; x < COLS; x++) want.push(w.grid[y][x] || EMPTY);
     var p = w.piece;
     if (p && w.alive) {
-      var gy = p.y;
-      while (fits(w, p.cells, p.x, gy + 1)) gy++;
-      for (var i = 0; i < p.cells.length; i++) {
-        var gx = p.x + p.cells[i][0], gyy = gy + p.cells[i][1];
-        if (gyy >= 0 && want[gyy * COLS + gx] === EMPTY) want[gyy * COLS + gx] = "ghost";
-      }
       for (var j = 0; j < p.cells.length; j++) {
         var cx = p.x + p.cells[j][0], cy = p.y + p.cells[j][1];
         if (cy >= 0) want[cy * COLS + cx] = p.color;
@@ -160,14 +156,7 @@
     for (var k = 0; k < want.length; k++) {
       if (want[k] === w.drawn[k]) continue;
       w.drawn[k] = want[k];
-      var st = w.cells[k].style;
-      if (want[k] === "ghost") {
-        st.background = EMPTY;
-        st.boxShadow = "inset 0 0 0 3px " + (p ? p.color : JUNK);
-      } else {
-        st.background = want[k];
-        st.boxShadow = "none";
-      }
+      w.cells[k].style.background = want[k];
     }
     if (w.scoreNode) w.scoreNode.textContent = String(w.score);
     if (w.linesNode) w.linesNode.textContent = String(w.lines);
@@ -224,7 +213,7 @@
       gapRand: K.random(view.seed + 7919) };
     scene.appendChild(K.el("div", "label kt-label", "BLOCK DROP · " + (solo ? "SOLO" : "TOGETHER") + " · GAME " + view.run));
     if (solo && view.racers.length) {
-      var w = makeWell(scene, view.racers[0], 760, 180, 40);
+      var w = makeWell(scene, view.racers[0], 720, 180, 40);
       var panel = K.el("div", "bd-panel");
       panel.appendChild(K.el("div", "label", "SCORE"));
       w.scoreNode = K.el("div", "num", "0");
@@ -258,7 +247,7 @@
       game.side = K.el("div", "kt-side");
       scene.appendChild(game.side);
     } else if (!solo) {
-      var n = view.racers.length, cs = 34, wellW = COLS * cs, gapW = 90;
+      var n = view.racers.length, cs = 30, wellW = COLS * cs, gapW = 70;
       var x0 = Math.round((1920 - (n * wellW + (n - 1) * gapW)) / 2);
       for (var k = 0; k < n; k++) {
         var x = x0 + k * (wellW + gapW), well = makeWell(scene, view.racers[k], x, 230, cs);
@@ -354,7 +343,7 @@
         p.y++;
         rows++;
       }
-      w.score += rows * 2;
+      w.score += rows;
       lock(w);
     }
     draw(w);

@@ -1,4 +1,4 @@
-// Feasibility test 1: can the TV's Node.js (v0.10, ES5) reach the Anthropic API over HTTPS?
+// Checks that the TV's Node.js (v0.10, ES5) can reach the Anthropic API over HTTPS.
 //
 // Run on the TV (no API key needed):
 //   ssh -F .devmode/ssh_config lgtv 'node' < tools/tls-check.js

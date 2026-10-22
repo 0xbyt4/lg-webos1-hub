@@ -200,6 +200,12 @@ function startServer() {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         return res.end(tvPage());
       }
+      // The TV pages' request helper, sending to this server instead of the TV's hub.
+      if (p === "/hub.js" || p === "/tvapp/hub.js") {
+        res.writeHead(200, { "Content-Type": "application/javascript" });
+        return res.end(fs.readFileSync(path.join(ROOT, "apps", "home", "hub.js"), "utf8")
+          .replace('var API = "http://127.0.0.1:8765";', 'var API = "";'));
+      }
       // The TV Games screen and its files, at the same relative paths as in the app.
       if (p === "/tvapp/games.html") {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });

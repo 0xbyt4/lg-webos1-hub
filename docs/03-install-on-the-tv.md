@@ -59,8 +59,8 @@ TV_IP=192.168.1.50 scripts/deploy-app.sh apps/<name> [services/<name>]
 | Open the Home Screen on the TV | Phone: **Home screen** at the top. TV remote: **Home** button, then **Home Screen** |
 | Open an app or a channel on the TV | Home Screen: arrows, then **OK** on a tile or on a row under **On now** |
 | After the TV restarts | Open **Home Screen** once; this starts the hub |
-| Read the hub log | Over SSH: `curl http://127.0.0.1:8765/api/logs` |
-| Remove an app this project installed | Phone, **Remote** tab: hold its tile, then confirm |
+| Read the hub log | Over SSH: `curl -s -H 'X-Access-Code: <your code>' http://127.0.0.1:8765/api/logs` |
+| Remove another app you installed with `scripts/deploy-app.sh` (id prefix `com.lgtvfastest.`) | Phone, **Remote** tab: hold its tile, then confirm |
 | Play a game | TV: **Games** tile. Phones: `http://<tv-ip>:8765/play` and the room code |
 
 **Tip:** Move **Home Screen** to the front of the TV's app bar. Then **Home** and **OK** open it.
@@ -78,7 +78,7 @@ The text goes from the phone to the TV over your home network only.
 
 ## Remove everything
 
-1. Remove **Home Screen** from the TV app bar, or hold the tiles of the project's apps in the **Remote** tab and confirm.
+1. Remove **Home Screen** from the TV app bar.
 2. In **Developer Mode**, turn off **Dev Mode Status**. The TV restarts and closes the SSH port.
 
 Next: [How it works](04-how-it-works.md).

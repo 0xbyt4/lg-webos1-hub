@@ -16,7 +16,7 @@ Everything runs in one service and one TV app. After a TV restart you open one a
   <img src="docs/images/tv-home.png" alt="Home Screen on the TV: clock, assistant state, phone address and big app tiles" width="720">
 </p>
 
-**Status:** built from the two tested projects; tested on the TV (webOS 1.4): remote, assistant, Home Screen, games.
+**Status:** experimental. Tested on an LG 47LB652V (webOS 1.4.0): the remote, the assistant, the Home Screen, the health monitor and the five games.
 
 ## Quick start
 
@@ -25,7 +25,7 @@ You need a computer with Node.js 22 or later, on the same network as the TV.
 1. Pair with the TV: `node tools/pair.js 192.168.1.50` ([details](docs/01-find-and-pair.md)).
 2. Turn on Developer Mode and run `TV_IP=192.168.1.50 scripts/setup-devmode.sh` ([details](docs/02-developer-mode.md)).
 3. Install: `TV_IP=192.168.1.50 scripts/deploy.sh` ([details](docs/03-install-on-the-tv.md)).
-4. On the phone, open `http://192.168.1.50:8765`, choose an access code, and add the page to the phone's home screen.
+4. On the phone, open `http://192.168.1.50:8765`. Type the **setup PIN** that the Home Screen shows next to the phone address, choose an access code (6-32 characters), and add the page to the phone's home screen.
 5. For the assistant: **Settings** tab, **Claude**, save your Anthropic API key.
 
 ## The phone page
@@ -36,7 +36,7 @@ One page with three tabs, at `http://<tv-ip>:8765`.
 | --- | --- | --- |
 | Remote | Assistant | Settings |
 
-- **Remote:** app shortcuts (hold a tile to remove an app this project installed), Free memory, arrow keys or touchpad, Back, Home, volume, channel, media keys, Type on TV, number and color keys. The power button and **Home screen** sit at the top of every tab.
+- **Remote:** app shortcuts (hold a tile to remove another app installed with `scripts/deploy-app.sh` under the `com.lgtvfastest.` id prefix), Free memory, arrow keys or touchpad, Back, Home, volume, channel, media keys, Type on TV, number and color keys. The power button and **Home screen** sit at the top of every tab.
 - **Assistant:** type a request, or use the microphone key of the phone keyboard to speak.
 - **Settings:** health, activity, schedules, health rules, and the Claude settings (API key, model, effort, limits, show on TV, web search).
 - The access code protects everything. The phone remembers it.
@@ -135,14 +135,19 @@ The screenshots show the real pages with sample data (generic channel names, a f
 - **Developer Mode expires:** press **Extend Session Time** in the Developer Mode app regularly, or the apps disappear.
 - **Guide data only with Live TV on screen** (see above). A guide question from another app switches to Live TV.
 - **No TV microphone and no browser speech recognition** (the page is plain HTTP); the phone keyboard's dictation works.
+- **Old root certificates:** the TV's Node.js trusts its built-in certificates, which expire in January 2028. The assistant may stop reaching the API then.
 
 ## Security
 
-- The phone page and the API need the access code. Requests from the TV itself (127.0.0.1 or its own network address) do not. Ten wrong codes lock other devices out for ten minutes; the TV itself is never locked out.
+- The phone page and the API need the access code (6-32 characters). Only the Home Screen app needs none: the service gives it a token that web pages cannot get, so a page in the TV's own browser is treated like any other device.
+- The first access code needs the setup PIN that the Home Screen shows, so only someone who can see the TV sets it.
+- Ten wrong codes or PINs from one address lock that address out for ten minutes; other phones and the Home Screen keep working.
+- The hub answers only requests for its own address (no DNS rebinding), accepts only JSON in POST requests, and sends no open CORS headers. The games' WebSocket accepts only pages served by the hub.
+- The access code and the API key travel over plain HTTP on the home network. Use the hub only on a network you trust.
 - The API key stays on the TV, in the hub's settings file. The page shows only its last four characters. It is never logged or committed.
 - `.tv_key` (pairing key) and `.devmode/` (SSH key and tools) are in `.gitignore`. The pairing key enters only the installed package.
-- Remote commands check every argument (known keys, known apps, text up to 200 characters, bounded touchpad moves). Only apps this project installed can be removed.
-- Games: a phone joins only with the room code on the TV screen (20 wrong codes a minute stop new joins for a while; players who rejoin with their token are not affected), and can only send game input (the host phone can also start, skip and stop games). A quiz calls Claude once per start, so a room allows one quiz request at a time, 30 seconds between starts and 20 starts, on top of the daily limit. Messages, frames and the number of connections are limited, a connection that does not say who it is within 5 seconds is closed, and a client that stops reading is dropped.
+- Remote commands check every argument (known keys, known apps, text up to 200 characters, bounded touchpad moves). Only Developer Mode apps with the `com.lgtvfastest.` id prefix can be removed, and never the Home Screen.
+- Games: a phone joins only with the room code on the TV screen (20 wrong codes a minute from one address stop joins from that address for a while; players who rejoin with their token are not affected), and can only send game input (the host phone can also start, skip and stop games). A quiz calls Claude once per start, so a room allows one quiz request at a time, 30 seconds between starts and 20 starts, on top of the daily limit. Messages, frames and the number of connections are limited, a connection that does not say who it is within 5 seconds is closed, and a client that stops reading is dropped.
 
 ## Files
 
@@ -168,12 +173,12 @@ The screenshots show the real pages with sample data (generic channel names, a f
 node tests/run.js
 ```
 
-The tests run on a computer with Node.js 22 or later and need no packages. They cover the game rooms, every game's rules, the TV parts of Block Drop and Snake Arena (in a small fake page), the TV screen's long-polls, and the real server with phones on WebSockets. They do not reach a TV.
+The tests run on a computer with Node.js 22 or later and need no packages. They cover the access rules (setup PIN, access code, Home Screen token, lockout, Host and CORS checks), the game rooms, every game's rules, the TV parts of Block Drop and Snake Arena (in a small fake page), the TV screen's long-polls, the TV control client against fake TVs, and the real server with phones on WebSockets. They do not reach a TV.
 
 The code that runs on the TV must stay ES5 (Node.js 0.10 and WebKit 537). To check it:
 
 ```bash
-npx acorn@8.14.0 --ecma5 --silent services/home/games.js
+npx acorn@8.14.0 --ecma5 --silent services/home/*.js services/home/games/*.js apps/home/*.js apps/home/games/*.js
 ```
 
 ## Docs

@@ -29,6 +29,7 @@ var MAX_NAME = 16;
 var COLORS = ["#f2b24c", "#4f8cff", "#3fb27f", "#e5484d", "#b07cf2", "#2fc4c4", "#f27cb0", "#c9cdd3"];
 var RATE_PER_SECOND = 30;
 var JOIN_FAILURES_PER_MINUTE = 20;
+var GONE_MS = 60 * 1000; // a player gone this long can make space in a full room
 var TV_GONE_MS = 2 * 60 * 1000; // close a room this long after the TV screen disconnects
 var HELLO_MS = 5000; // a connection must say who it is within this time
 
@@ -109,7 +110,7 @@ TvChannel.prototype.close = function () {
 function GameHub(options) {
   this.options = options;
   this.room = null;
-  this.joinFailures = [];
+  this.joinFailures = {}; // address -> times of wrong room codes in the last minute
 }
 
 // GET /api/games/tv?since=N from the TV Games screen. Opens (or keeps) the room, then
@@ -246,7 +247,10 @@ GameHub.prototype.openRoom = function (conn) {
 GameHub.prototype.join = function (conn, msg) {
   var room = this.room;
   var now = Date.now();
-  this.joinFailures = this.joinFailures.filter(function (t) { return now - t < 60000; });
+  var address = conn.remoteAddress || "";
+  var failures = (this.joinFailures[address] || []).filter(function (t) { return now - t < 60000; });
+  if (failures.length) this.joinFailures[address] = failures;
+  else delete this.joinFailures[address];
   function refuse(error) {
     conn.sendJson({ t: "error", error: error });
     conn.close(1008);
@@ -260,10 +264,10 @@ GameHub.prototype.join = function (conn, msg) {
       if (room.players[i].token === token) player = room.players[i];
     }
   }
-  // A player who comes back with a valid token is never locked out by others' wrong codes.
-  if (!player && this.joinFailures.length >= JOIN_FAILURES_PER_MINUTE) return refuse("too many tries, wait a minute");
+  // Wrong codes lock out only the address they came from, and never a returning player.
+  if (!player && failures.length >= JOIN_FAILURES_PER_MINUTE) return refuse("too many tries, wait a minute");
   if (!codeOk) {
-    this.joinFailures.push(now);
+    this.joinFailures[address] = failures.concat([now]);
     return refuse(room ? "wrong room code" : "no game is open on the TV");
   }
   if (player) {
@@ -274,6 +278,7 @@ GameHub.prototype.join = function (conn, msg) {
       player.conn.close(1000);
     }
   } else {
+    if (room.players.length >= MAX_PLAYERS) this.dropGone(now);
     if (room.players.length >= MAX_PLAYERS) return refuse("the room is full");
     var id = room.nextId++;
     player = {
@@ -305,7 +310,20 @@ GameHub.prototype.left = function (who, conn) {
   if (who.player.conn !== conn) return;
   who.player.conn = null;
   who.player.connected = false;
+  who.player.leftAt = Date.now();
   this.update();
+};
+
+// A full room makes space by dropping the player who left longest ago (closed tab, phone
+// that joined again without its token), if that was more than GONE_MS ago.
+GameHub.prototype.dropGone = function (now) {
+  var room = this.room, oldest = null;
+  room.players.forEach(function (p) {
+    if (!p.connected && now - p.leftAt >= GONE_MS && (!oldest || p.leftAt < oldest.leftAt)) oldest = p;
+  });
+  if (!oldest) return;
+  room.players = room.players.filter(function (p) { return p !== oldest; });
+  this.options.log("game room " + room.code + ": " + oldest.name + " removed (gone)");
 };
 
 // Start or stop a game, or press the host button (next round). The TV remote and the
@@ -340,7 +358,7 @@ GameHub.prototype.control = function (conn, msg) {
       var allowed = game.settings[key].map(function (o) { return o.value; });
       settings[key] = allowed.indexOf(asked[key]) >= 0 ? asked[key] : allowed[0];
     }
-    // The language of the questions: the host phone's, like "tr-TR" (TV remote: English).
+    // The language of the questions: the host phone's, like "tr-TR" (from the TV remote: the TV's language).
     var lang = text(msg.lang);
     if (!/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(lang)) lang = room.lang || "en";
     room.lang = lang;

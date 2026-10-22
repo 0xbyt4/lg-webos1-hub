@@ -35,11 +35,11 @@ h.run(async function () {
   BD.render(box, view("playing", "solo", 1, [racer(1, "Ana")]));
   var w = bd.game().wells[0];
   assert.ok(w.piece, "a piece falls");
-  for (var x = 4; x < 10; x++) w.grid[19][x] = "#fff";
+  for (var x = 4; x < 12; x++) w.grid[19][x] = "#fff";
   w.piece = { type: "I", cells: [[0, 1], [1, 1], [2, 1], [3, 1]], size: 4, color: "#2fc4c4", x: 0, y: 10 };
   BD.onEvent({ t: "input", id: 1, run: 1, move: "drop" });
   assert.strictEqual(w.lines, 1);
-  assert.strictEqual(w.score, 100 + 8 * 2);
+  assert.strictEqual(w.score, 60 + 8, "60 for one line, 1 for each row of the drop");
   assert.ok(w.grid[19].every(function (c) { return !c; }), "bottom row is empty after the clear");
   // Moves: left against the wall does nothing, rotate turns, O does not turn.
   w.piece = { type: "T", cells: [[1, 0], [0, 1], [1, 1], [2, 1]], size: 3, color: "#b07cf2", x: 0, y: 5 };
@@ -63,12 +63,12 @@ h.run(async function () {
   BD.render(box, view("playing", "multi", 2, two));
   var a = bd.game().wells[0], b = bd.game().wells[1];
   assert.strictEqual(a.next, b.next, "same pieces in every well");
-  for (x = 1; x < 10; x++) { a.grid[19][x] = "#fff"; a.grid[18][x] = "#fff"; }
+  for (x = 1; x < 12; x++) { a.grid[19][x] = "#fff"; a.grid[18][x] = "#fff"; }
   a.piece = { type: "I", cells: [[1, 0], [1, 1], [1, 2], [1, 3]], size: 4, color: "#2fc4c4", x: -1, y: 5 };
   BD.onEvent({ t: "input", id: 1, run: 2, move: "drop" });
   assert.strictEqual(a.lines, 2);
   var junk = b.grid[19].filter(function (c) { return c === "#4a4d53"; }).length;
-  assert.strictEqual(junk, 9, "one junk row with one gap");
+  assert.strictEqual(junk, 11, "one junk row with one gap");
   assert.ok(b.grid[18].every(function (c) { return !c; }));
   for (i = 0; i < 200 && b.alive; i++) BD.onEvent({ t: "input", id: 2, run: 2, move: "drop" });
   rep = reports[reports.length - 1];
@@ -85,14 +85,14 @@ h.run(async function () {
   BD.render(box, view("playing", "multi", 5, three));
   a = bd.game().wells[0]; b = bd.game().wells[1]; var c = bd.game().wells[2];
   b.grid[0][3] = "#fff";
-  for (var yy = 16; yy < 20; yy++) for (x = 1; x < 10; x++) a.grid[yy][x] = "#fff";
+  for (var yy = 16; yy < 20; yy++) for (x = 1; x < 12; x++) a.grid[yy][x] = "#fff";
   a.piece = { type: "I", cells: [[1, 0], [1, 1], [1, 2], [1, 3]], size: 4, color: "#2fc4c4", x: -1, y: 0 };
   BD.onEvent({ t: "input", id: 1, run: 5, move: "drop" });
   assert.strictEqual(a.lines, 4);
   assert.strictEqual(b.alive, false, "Bob pushed out");
   assert.strictEqual(b.grid.length, 20, "Bob keeps 20 rows");
   assert.strictEqual(c.grid.length, 20);
-  assert.strictEqual(c.grid[19].filter(function (q) { return q; }).length, 9, "Cem still gets junk");
+  assert.strictEqual(c.grid[19].filter(function (q) { return q; }).length, 11, "Cem still gets junk");
   assert.ok(a.piece && a.piece.y < 3, "Ana gets a new piece");
   assert.deepStrictEqual(reports[0].crashes, [{ id: 2, score: 0 }]);
   assert.strictEqual(reports[0].over, false);

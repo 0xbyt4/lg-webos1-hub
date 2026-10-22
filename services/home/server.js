@@ -1,10 +1,11 @@
 // TV hub server: phone remote, Claude assistant, health monitor and scheduler in one
 // process (Node 0.10, ES5), on port 8765.
 //
-// Serves the phone page and a JSON API. Every /api call from another device needs the
-// access code (header X-Access-Code); requests from the TV itself (the Home Screen app on
-// 127.0.0.1, or the TV's own network address) do not. Public: /api/status, setting the
-// first code, and app icons.
+// Serves the phone page and a JSON API. Every /api call needs the access code (header
+// X-Access-Code), except calls from the Home Screen app, which send the token that the
+// service's "start" method gives it (header X-Hub-Token). Public: /api/status, setting
+// the first code (with the setup PIN shown on the Home Screen), and app icons.
+var crypto = require("crypto");
 var fs = require("fs");
 var http = require("http");
 var os = require("os");
@@ -29,7 +30,12 @@ var MAX_BODY = 4096;
 var ANSWER_MAX_AGE_MS = 2 * 60 * 1000;
 var ANSWER_MAX_CHARS = 400; // what fits on the answer screen with two programs
 var AUTH_WINDOW_MS = 10 * 60 * 1000;
-var AUTH_MAX_FAILURES = 10;
+var AUTH_MAX_FAILURES = 10; // wrong codes or PINs from one address in AUTH_WINDOW_MS
+var MIN_CODE = 6;
+var MAX_HTTP_CONNECTIONS = 200;
+var MAX_HTTP_PER_ADDRESS = 24; // one device cannot hold every connection
+var ASK_TIMEOUT_MS = 10 * 60 * 1000; // an assistant answer can take longer than Node's 120 s
+var PIN_MAX_FAILURES = 20; // wrong setup PINs in total before a new PIN is made
 
 var logLines = [];
 function log(msg) {
@@ -154,9 +160,7 @@ function send(res, status, type, body, extraHeaders) {
   var headers = {
     "Content-Type": type,
     "Content-Length": Buffer.isBuffer(body) ? body.length : Buffer.byteLength(body),
-    "Cache-Control": "no-store",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, X-Access-Code"
+    "Cache-Control": "no-store"
   };
   for (var k in extraHeaders || {}) if (extraHeaders.hasOwnProperty(k)) headers[k] = extraHeaders[k];
   res.writeHead(status, headers);
@@ -170,12 +174,16 @@ function sendJson(res, status, obj) {
 function readBody(req, cb, limit) {
   var size = 0, chunks = [], tooBig = false;
   req.on("data", function (c) {
+    if (tooBig) return;
     size += c.length;
-    if (size > (limit || MAX_BODY)) tooBig = true;
-    else chunks.push(c);
+    if (size <= (limit || MAX_BODY)) return chunks.push(c);
+    // Answer at once and drop the connection, instead of reading a large body to the end.
+    tooBig = true;
+    cb(new Error("body too large"));
+    setTimeout(function () { req.connection.destroy(); }, 100);
   });
   req.on("end", function () {
-    if (tooBig) return cb(new Error("body too large"));
+    if (tooBig) return;
     if (!size) return cb(null, {});
     try {
       cb(null, JSON.parse(Buffer.concat(chunks).toString("utf8")));
@@ -250,6 +258,11 @@ function start(ports, options) {
   var port = ports[0];
   var store = new Store(log);
   var tv = new TVClient(process.env.TV_HOST || "127.0.0.1", path.join(ROOT, "tv_key"));
+  try {
+    fs.chmodSync(path.join(ROOT, "tv_key"), 384); // 0600: it arrives in the package with default rights
+  } catch (e) {
+    // not paired yet, or not ours to change
+  }
   var tools = null; // set below; the remote opens channels through the tools
   var remote = new remoteModule.Remote(tv, {
     uninstall: options.uninstall,
@@ -270,23 +283,67 @@ function start(ports, options) {
     store: store,
     ask: function (request, cb) { agent.oneShot(request, cb); }
   });
-  var failures = [];
+  // The Home Screen app gets this token from the service's "start" method (service.js).
+  // Only apps on the TV can call that, so a web page in the TV's browser, which also
+  // connects from 127.0.0.1, cannot act as the TV.
+  var tvToken = crypto.randomBytes(16).toString("hex");
+  var pin = null; // setup PIN shown on the Home Screen until the first access code is set
+  var pinFailures = 0;
+  var failures = {}; // address -> times of wrong codes or PINs
 
-  // The TV itself (any of its own addresses) needs no code.
   function local(req) {
     return !!localAddresses()[req.connection.remoteAddress];
   }
 
+  // A request from the Home Screen app on this TV: needs no access code.
+  function tvRequest(req) {
+    return local(req) && req.headers["x-hub-token"] === tvToken;
+  }
+
   function authorized(req) {
-    if (local(req)) return true;
+    if (tvRequest(req)) return true;
     var code = store.data.accessCode;
     return !!code && req.headers["x-access-code"] === code;
   }
 
-  function lockedOut() {
+  function setupPin() {
+    if (store.data.accessCode) return null;
+    if (!pin) pin = String(100000 + crypto.randomBytes(4).readUInt32BE(0) % 900000);
+    return pin;
+  }
+
+  // Wrong codes lock out the address they came from, not every phone.
+  function recentFailures(address) {
     var now = Date.now();
-    failures = failures.filter(function (t) { return now - t < AUTH_WINDOW_MS; });
-    return failures.length >= AUTH_MAX_FAILURES;
+    var list = (failures[address] || []).filter(function (t) { return now - t < AUTH_WINDOW_MS; });
+    if (list.length) failures[address] = list;
+    else delete failures[address];
+    return list;
+  }
+
+  function fail(req) {
+    var address = req.connection.remoteAddress;
+    failures[address] = recentFailures(address).concat([Date.now()]);
+  }
+
+  function lockedOut(req) {
+    return recentFailures(req.connection.remoteAddress).length >= AUTH_MAX_FAILURES;
+  }
+
+  // DNS rebinding: a web page that points its own name at this TV still sends that name.
+  function hostAllowed(req) {
+    var host = String(req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
+    return host === "localhost" || !!localAddresses()[host];
+  }
+
+  // The Home Screen pages are file:// pages (Origin "null"); the phone pages are served
+  // from here and need no CORS. Other sites get no CORS headers; a page can still send
+  // Origin "null" (sandboxed frame), so the token, the code and the PIN are the real guard.
+  function corsHeaders(req, res) {
+    var origin = req.headers.origin;
+    if (origin !== "null" && origin !== "file://") return;
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Access-Code, X-Hub-Token");
   }
 
   function handleApi(req, res, u, body) {
@@ -296,6 +353,7 @@ function start(ports, options) {
       var h = health.status();
       h.upcoming = scheduler.upcoming();
       h.address = pageAddress(port);
+      if (tvRequest(req)) h.setupPin = setupPin(); // shown on the Home Screen until a code exists
       return sendJson(res, 200, h);
     }
     if (req.method === "GET" && p === "/api/state") return remote.state(function (st) { sendJson(res, 200, st); });
@@ -315,7 +373,7 @@ function start(ports, options) {
     }
     // The TV Games screen (see games.js for why it polls instead of using a WebSocket).
     if (p === "/api/games/tv") {
-      if (!local(req)) return sendJson(res, 403, { error: "only the TV itself" });
+      if (!tvRequest(req)) return sendJson(res, 403, { error: "only the TV itself" });
       if (req.method === "GET") {
         return games.tvPoll(Number(q.since) || 0, function (out) { sendJson(res, 200, out); },
           // "close" on the response: the connection went away before the answer.
@@ -380,6 +438,7 @@ function start(ports, options) {
       return sendJson(res, 200, publicSettings(store.data));
     }
     if (req.method === "POST" && p === "/api/ask") {
+      req.connection.setTimeout(ASK_TIMEOUT_MS);
       var text = String(body.text || "").replace(/^\s+|\s+$/g, "");
       if (!text || text.length > 500) return sendJson(res, 400, { error: "say something (at most 500 characters)" });
       log("ask: " + text.slice(0, 80));
@@ -403,6 +462,8 @@ function start(ports, options) {
 
   function handle(req, res) {
     var u = url.parse(req.url);
+    if (!hostAllowed(req)) return sendJson(res, 403, { error: "open this page with the TV's address" });
+    corsHeaders(req, res);
     if (req.method === "OPTIONS") return send(res, 204, "text/plain", "");
     if (req.method === "GET" && (u.pathname === "/" || u.pathname === "/index.html")) {
       return send(res, 200, "text/html; charset=utf-8", fs.readFileSync(path.join(ROOT, "static", "phone.html")));
@@ -424,13 +485,13 @@ function start(ports, options) {
       return send(res, 200, "image/png", fs.readFileSync(path.join(ROOT, "static", "icon.png")),
         { "Cache-Control": "max-age=86400" });
     }
-    if (u.pathname.indexOf("/api/") !== 0) return sendJson(res, 404, { error: "not found" });
+    if ((u.pathname || "").indexOf("/api/") !== 0) return sendJson(res, 404, { error: "not found" });
 
     // Public: whether an access code exists, setting the first one, and app icons (an
     // <img> on the phone cannot send the code header; icons come from the TV itself).
     // The status never checks a code, so it cannot be used to guess one.
     if (req.method === "GET" && u.pathname === "/api/status") {
-      return sendJson(res, 200, { accessCodeSet: !!store.data.accessCode, authorized: local(req) });
+      return sendJson(res, 200, { accessCodeSet: !!store.data.accessCode, authorized: tvRequest(req) });
     }
     if (req.method === "GET" && u.pathname === "/api/icon") {
       return remote.icon(String(querystring.parse(u.query).id || ""), function (err, data) {
@@ -438,27 +499,43 @@ function start(ports, options) {
         send(res, 200, "image/png", data, { "Cache-Control": "max-age=86400" });
       });
     }
+    // JSON only: a web page cannot send that to another site without asking first (CORS
+    // preflight), so it cannot post blind form or text requests here.
+    if (req.method === "POST" && !/^application\/json/i.test(String(req.headers["content-type"] || ""))) {
+      return sendJson(res, 415, { error: "send JSON (Content-Type: application/json)" });
+    }
     readBody(req, function (err, body) {
       if (err) return sendJson(res, 400, { error: err.message });
-      // Wrong codes lock other devices out for a while; the TV itself is never locked out,
-      // so a phone with an old code cannot take the Home Screen down.
-      if (!local(req) && lockedOut()) return sendJson(res, 429, { error: "too many wrong codes, wait 10 minutes" });
+      // Wrong codes lock that address out for a while; the Home Screen is never locked out.
+      if (!tvRequest(req) && lockedOut(req)) return sendJson(res, 429, { error: "too many wrong codes, wait 10 minutes" });
       if (req.method === "POST" && u.pathname === "/api/access") {
-        // The first code can be set by anyone on the home network; changing it needs the old one.
-        if (store.data.accessCode && !authorized(req)) {
-          if (req.headers["x-access-code"]) failures.push(Date.now());
+        // The first code needs the setup PIN from the Home Screen, so only someone who can
+        // see the TV sets it; changing it needs the old code.
+        if (!store.data.accessCode) {
+          if (!tvRequest(req) && String(body.pin || "") !== setupPin()) {
+            fail(req);
+            // Many wrong PINs (from any number of addresses): the Home Screen shows a new one.
+            if (++pinFailures >= PIN_MAX_FAILURES) {
+              pin = null;
+              pinFailures = 0;
+            }
+            return sendJson(res, 403, { error: "enter the setup PIN shown on the TV's Home Screen" });
+          }
+        } else if (!authorized(req)) {
+          if (req.headers["x-access-code"]) fail(req);
           return sendJson(res, 403, { error: "access code required" });
         }
         var code = String(body.code || "");
-        if (code.length < 4 || code.length > 32) return sendJson(res, 400, { error: "code must be 4-32 characters" });
+        if (code.length < MIN_CODE || code.length > 32) return sendJson(res, 400, { error: "code must be " + MIN_CODE + "-32 characters" });
         var hadCode = !!store.data.accessCode;
         store.data.accessCode = code;
+        pin = null;
         store.save();
         log("access code " + (hadCode ? "changed" : "set"));
         return sendJson(res, 200, { ok: true });
       }
       if (!authorized(req)) {
-        if (req.headers["x-access-code"]) failures.push(Date.now());
+        if (req.headers["x-access-code"]) fail(req);
         return sendJson(res, 401, { error: store.data.accessCode ? "wrong or missing access code" : "set an access code first" });
       }
       try {
@@ -474,10 +551,24 @@ function start(ports, options) {
   var servers = ports.map(function (p) {
     var server = http.createServer(handle);
     server.on("error", function (e) { log("server error on port " + p + ": " + e.message); });
-    wsserver.attach(server, "/ws", function (conn) { games.connect(conn); });
+    // Idle connections close after Node's default 120 s; /api/ask gets longer (see there).
+    server.maxConnections = MAX_HTTP_CONNECTIONS;
+    var perAddress = {};
+    server.on("connection", function (socket) {
+      var address = socket.remoteAddress;
+      if ((perAddress[address] || 0) >= MAX_HTTP_PER_ADDRESS) return socket.destroy();
+      perAddress[address] = (perAddress[address] || 0) + 1;
+      socket.on("close", function () { if (--perAddress[address] <= 0) delete perAddress[address]; });
+    });
+    wsserver.attach(server, "/ws", function (conn) { games.connect(conn); }, function (req) {
+      // Same checks as for pages: the TV's own address, and a page served from here.
+      var origin = String(req.headers.origin || "");
+      return hostAllowed(req) && (!origin || origin.replace(/^https?:\/\//, "") === String(req.headers.host || ""));
+    });
     server.listen(p, "0.0.0.0");
     return server;
   });
+  servers.tvToken = tvToken;
   health.start();
   scheduler.start();
   guide.start();

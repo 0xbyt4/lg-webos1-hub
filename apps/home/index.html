@@ -138,9 +138,10 @@
   <div class="closes" id="closes"></div>
 </div>
 
+<script src="hub.js"></script>
 <script>
 (function () {
-  var API = "http://127.0.0.1:8765";
+  var API = "http://127.0.0.1:8765"; // app icons; requests go through hub.js
   var ANSWER_SECONDS = 60;
   var COLUMNS = 6;
   var KEY = { LEFT: 37, UP: 38, RIGHT: 39, DOWN: 40, OK: 13, BACK: 461 };
@@ -164,16 +165,7 @@
   }
 
   function request(method, path, body, done) {
-    var x = new XMLHttpRequest();
-    x.open(method, API + path, true);
-    if (body) x.setRequestHeader("Content-Type", "application/json");
-    x.onreadystatechange = function () {
-      if (x.readyState !== 4) return;
-      var data = null;
-      try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
-      done(x.status, data);
-    };
-    x.send(body ? JSON.stringify(body) : null);
+    Hub.request(method, path, body, done);
   }
 
   // The TV has no developer console: send script errors to the hub log.
@@ -182,12 +174,7 @@
   };
 
   // Start the hub service; it keeps running after this app closes.
-  if (typeof PalmServiceBridge !== "undefined") {
-    var bridge = new PalmServiceBridge();
-    bridge.onservicecallback = function () {};
-    bridge.call("luna://com.lgtvfastest.home.service/start", "{}");
-    window.hubBridge = bridge; // keep a reference so the call is not collected
-  }
+  Hub.start();
 
   // Clock
 
@@ -404,7 +391,9 @@
   function renderHealth(h) {
     $("dot").className = "dot ok";
     $("state").textContent = "Assistant ready";
-    $("address").textContent = h.address ? "Phone: " + h.address.replace(/^http:\/\//, "") : "";
+    // Until the first access code exists, the phone page asks for this PIN.
+    $("address").textContent = (h.address ? "Phone: " + h.address.replace(/^http:\/\//, "") : "") +
+      (h.setupPin ? "   Setup PIN " + h.setupPin : "");
     var parts = [];
     if (h.now) parts.push("Memory " + h.now.availableMB + " MB free");
     if (h.disk) parts.push("Storage " + h.disk.freeMB + " MB free");

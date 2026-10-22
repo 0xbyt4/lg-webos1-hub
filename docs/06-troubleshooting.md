@@ -1,6 +1,6 @@
 # 6. Troubleshooting
 
-Start with the hub log: `ssh -F .devmode/ssh_config lgtv 'curl -s http://127.0.0.1:8765/api/logs'`.
+Start with the hub log: `ssh -F .devmode/ssh_config lgtv "curl -s -H 'X-Access-Code: <your code>' http://127.0.0.1:8765/api/logs"`. The **Settings** tab on the phone shows the recent activity too.
 
 ## The phone cannot open the page
 
@@ -35,10 +35,10 @@ The code is stored per address in the phone browser, so a new address (for examp
 
 | Problem | Fix |
 | --- | --- |
-| The TV says "This TV cannot run the games (no WebSocket)" | The TV's web engine has no WebSocket; the games cannot run on it yet |
 | The TV says "Connecting to the hub..." | The hub does not run: open **Home Screen** once, then **Games** again |
 | The phone says "wrong room code" or "no game is open on the TV" | Open **Games** on the TV and type the code it shows |
-| The phone says "too many tries, wait a minute" | Many wrong codes in a minute stop all joins for a moment; wait and type the code again |
+| The phone says "too many tries, wait a minute" | Many wrong codes in a minute from this phone's address stop its joins for a moment; wait and type the code again |
+| The phone says "the room is full" | Eight players are in the room. A player who left more than a minute ago makes space; or close and open **Games** on the TV for a new room |
 | A phone shows "reconnecting..." | The phone lost Wi-Fi or locked its screen; it joins again by itself as the same player |
 
 ## "On now" stays empty
@@ -57,7 +57,9 @@ The permission list in the pairing manifest changed, or the TV was reset. Accept
 | `ssh: connect to host ... port 9922: Connection refused` or timeout | Developer Mode is off or expired. Open **Developer Mode** on the TV and check **Dev Mode Status**. |
 | `Permission denied (publickey)` | The SSH key changed (Developer Mode was turned off and on). Turn on **Key Server** and run `scripts/setup-devmode.sh` again. |
 | `.tv_key: No such file` | Pair first: `node tools/pair.js <tv-ip>` |
-| `ares-package: command not found` | Run `scripts/setup-devmode.sh` (it installs the LG CLI into `.devmode/tools`) |
+| `Developer Mode is not set up here` | Run `TV_IP=<tv-ip> scripts/setup-devmode.sh` (it writes `.devmode/ssh_config` and installs the LG CLI into `.devmode/tools`) |
+| `No .tv_key` | Pair first: `node tools/pair.js <tv-ip>` |
+| `install failed; the old version stays on the TV` | Free storage on the TV, or check that Developer Mode has not expired, then run it again. Open **Home Screen** to start the old hub again. |
 
 ## The apps disappeared from the TV
 

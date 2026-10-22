@@ -26,7 +26,9 @@ function ApiError(status, type, message) {
 }
 ApiError.prototype = Object.create(Error.prototype);
 
+// A timeout is not tried again: the API may have done (and billed) the work already.
 function retryable(err) {
+  if (err.type === "timeout") return false;
   return err.status === 0 || err.status === 408 || err.status === 409 || err.status === 429 || err.status >= 500;
 }
 

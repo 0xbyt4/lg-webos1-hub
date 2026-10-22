@@ -2,9 +2,14 @@
 .env
 .env.*
 !.env.example
-config.local.json
 .tv_key
 .devmode
+# Where the hub keeps its settings (access code, API key) and pairing key when it runs
+# from a clone (services/home/store.js, server.js)
+services/com.lgtvfastest.home.data/
+services/home/data/
+services/home/tv_key
+*.ipk
 
 # Tooling
 __pycache__/
